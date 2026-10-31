@@ -14,6 +14,7 @@
   --glass: rgba(255, 255, 255, .76);
   --glass-strong: rgba(255, 255, 255, .92);
   --accent: #3f8f73;
+  --warn: #a5482f;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {
@@ -26,6 +27,7 @@ html, body {
 }
 body { overflow: hidden; }
 button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+button:disabled { opacity: .45; cursor: default; }
 
 .screen { position: fixed; inset: 0; display: none; }
 .screen.on { display: block; }
@@ -55,28 +57,32 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 
 /* ---------- 鏡頭 ---------- */
 #lens { background: #fff; }
-#video, #still, #surreal {
+#video, #still, #surreal, #result {
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
 }
-#still { display: none; }
-#surreal { display: none; }
+#still, #surreal, #result { display: none; }
 #surreal.on { display: block; animation: develop 1.1s ease-out; }
+#result.on { display: block; animation: reveal 1.6s ease-out; }
 @keyframes develop { from { filter: brightness(2.2) saturate(.2); } to { filter: none; } }
+@keyframes reveal { from { opacity: 0; filter: brightness(1.8) blur(6px); } to { opacity: 1; filter: none; } }
 
 .topbar {
   position: absolute; left: 0; right: 0; top: 0;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
 }
-.brand, .pill, .badge {
+.topbar .right { display: flex; align-items: center; gap: 6px; }
+.brand, .pill, .badge, .gear {
   background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px;
   white-space: nowrap;
 }
-@media (max-width: 400px) { .brand { display: none; } }
 .brand { letter-spacing: .12em; }
 .pill b { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .badge { font-size: 11px; color: var(--ink-soft); }
+.badge.live { color: var(--accent); border-color: rgba(63,143,115,.4); }
+.gear { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; font-size: 16px; }
+@media (max-width: 400px) { .brand { display: none; } }
 
 .caption {
   position: absolute; left: 16px; right: 16px;
@@ -88,6 +94,8 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .caption.on { display: block; }
 .caption .q { font-size: 15px; }
 .caption small { display: block; margin-top: 4px; color: var(--ink-soft); font-size: 12px; }
+.caption .err { color: var(--warn); }
+.caption a { color: var(--accent); }
 
 /* ---------- 下方半透明面板 ---------- */
 .panel {
@@ -113,9 +121,10 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .row .name em { font-style: normal; font-size: 11px; color: var(--ink-soft); margin-left: 4px; }
 .row .pct { grid-area: pct; font-size: 12px; color: var(--ink-soft); text-align: right; font-variant-numeric: tabular-nums; }
 .row .track { grid-area: track; display: block; height: 5px; border-radius: 5px; background: rgba(31,42,39,.08); overflow: hidden; }
-.row .fill { display: block; height: 100%; width: 0; border-radius: 5px; transition: width .25s linear; }
+.row .fill { display: block; height: 100%; width: 0; border-radius: 5px; background: var(--accent); transition: width .25s linear; }
 .row.top .name { font-weight: 600; }
 .row.top .pct { color: var(--ink); font-weight: 600; }
+.row.used .fill { background: var(--ink); }
 
 .panel.min .labels { display: none; }
 .panel.min .panel-head { margin-bottom: 0; }
@@ -124,6 +133,30 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   .labels { gap: 0 10px; }
   .row .name em { display: none; }
 }
+
+/* ---------- 設定 ---------- */
+#settings {
+  position: fixed; inset: 0; display: none; align-items: flex-end; justify-content: center;
+  background: rgba(31,42,39,.25); z-index: 10;
+}
+#settings.on { display: flex; }
+.sheet {
+  width: 100%; max-width: 520px; background: var(--glass-strong);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-radius: 22px 22px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 12px;
+}
+.sheet h2 { font-size: 18px; font-weight: 500; }
+.sheet p { font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
+.sheet label { font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.sheet input {
+  font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--line); background: #fff; color: var(--ink);
+}
+.sheet .actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.sheet .actions button { padding: 10px 18px; border-radius: 999px; border: 1px solid var(--line); background: #fff; font-size: 14px; }
+.sheet .actions .save { background: var(--ink); color: #fff; border-color: var(--ink); }
+#healthMsg { font-size: 13px; line-height: 1.6; min-height: 1.6em; }
 </style>
 </head>
 <body>
@@ -135,7 +168,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   <p class="subtitle">Point the lens at the Green Museumbrary<br>and see what makes it unlike any other library.</p>
   <button id="startBtn" class="primary">Open Lens</button>
   <button id="demoBtn" class="link">No camera? Try a sample photo</button>
-  <p class="note">Frames are analysed on your device and never uploaded.<br>Interface prototype (phase 0): readings are simulated.</p>
+  <p class="note">Live readings are simulated on your device.<br>Tapping Heterotopia sends that one frame to the AI to read and transform it.</p>
 </section>
 
 <!-- 錯誤 -->
@@ -151,11 +184,15 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   <video id="video" playsinline muted autoplay></video>
   <img id="still" alt="">
   <canvas id="surreal"></canvas>
+  <img id="result" alt="Heterotopia version of this view">
 
   <header class="topbar">
     <div class="brand">SurrealLens</div>
     <div class="pill">Museumbrary <b id="total">--</b>%</div>
-    <div class="badge">Simulated</div>
+    <div class="right">
+      <div id="badge" class="badge">Simulated</div>
+      <button id="gearBtn" class="gear" aria-label="Settings">⚙</button>
+    </div>
   </header>
 
   <div id="caption" class="caption"></div>
@@ -173,27 +210,105 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   </section>
 </section>
 
+<!-- 設定：Worker 連線 -->
+<section id="settings">
+  <div class="sheet">
+    <h2>Connection</h2>
+    <p>Heterotopia uses your SurrealLens Worker. Each tap uses 1 Worker call. Settings stay on this device.</p>
+    <label>Worker URL
+      <input id="cfgUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://surreallens-gemini-proxy.xxx.workers.dev">
+    </label>
+    <label>Access token
+      <input id="cfgToken" type="password" autocomplete="off" placeholder="APP_ACCESS_TOKEN">
+    </label>
+    <div id="healthMsg"></div>
+    <div class="actions">
+      <button id="testBtn">Test connection</button>
+      <button id="closeBtn">Close</button>
+      <button id="saveBtn" class="save">Save</button>
+    </div>
+  </div>
+</section>
+
 <script>
 // ---------- 十二標籤（見 綠美圖_十二標籤.md） ----------
 // g 是推導時的身分（綠／美／圖），介面不顯示，留給之後分析用。
+// cue / low 給 Gemini 判讀濃度；op 是超現實畫法，給生成用。
 const LABELS = [
-  { id: 'chuantang', name: '穿堂', en: 'Passing Through',   g: '綠', q: 'At which step do you actually "enter" when you walk in from the park?', zh: '從公園走進大廳，是在哪一步「進來」的？' },
-  { id: 'jietian',   name: '借天', en: 'Borrowed Sky',      g: '綠', q: 'What does the borrowed weather turn the hall into?', zh: '借進大廳的天氣，會把大廳變成什麼？' },
-  { id: 'shawang',   name: '紗望', en: 'Veiled View',       g: '綠', q: 'Is the city seen through the mesh the same city you find when you walk out?', zh: '隔著網看到的城市，和走出去看到的，是同一座嗎？' },
-  { id: 'raoyou',    name: '繞遊', en: 'Looping Walk',      g: '綠', q: 'If you keep circling, where do you end up?', zh: '一直繞下去，最後會到哪裡？' },
-  { id: 'zhanren',   name: '展人', en: 'Exhibited People',  g: '美', q: 'Beside the atrium, who is really watching whom?', zh: '在挑空旁邊，到底是誰在看誰？' },
-  { id: 'shaiguang', name: '篩光', en: 'Sifted Light',      g: '美', q: 'What does light leave behind after it passes through the mesh?', zh: '光穿過網之後，留下了什麼？' },
-  { id: 'zizhan',    name: '自展', en: 'Self-Exhibit',      g: '美', q: 'What is the artwork people stop to photograph most here?', zh: '在綠美圖，人最常停下來拍的作品是什麼？' },
-  { id: 'kuangwai',  name: '框外', en: 'Framed Outside',    g: '美', q: 'Is a park framed by an opening still a park?', zh: '被開口框起來的公園，還算是公園嗎？' },
-  { id: 'fangsheng', name: '放聲', en: 'Released Sound',    g: '圖', q: 'When the market noise rises upstairs, what is left of the library?', zh: '市集的聲音傳上樓之後，圖書館還剩下什麼？' },
-  { id: 'liuren',    name: '留人', en: 'Lingering',         g: '圖', q: 'Once you sit down, when do you leave?', zh: '坐下來之後，人什麼時候才會離開？' },
-  { id: 'zhandu',    name: '展讀', en: 'Read as Exhibit',   g: '圖', q: 'Does anyone still read a book placed on a display stand?', zh: '放上展台的書，還有人讀嗎？' },
-  { id: 'sanjia',    name: '散架', en: 'Scattered Shelves', g: '圖', q: 'When shelves are no longer taller than you, how do you find a book?', zh: '書架不再比人高之後，人要怎麼找到書？' },
+  { id: 'chuantang', name: '穿堂', en: 'Passing Through', g: '綠',
+    q: 'At which step do you actually "enter" when you walk in from the park?', zh: '從公園走進大廳，是在哪一步「進來」的？',
+    cue: 'an ordinary building has doors; here the open ground-floor hall has none and the park passes through. Look for colonnades, both ends open, a view straight through to the other side',
+    low: 'an enclosed interior',
+    op: 'huge, clean circular cuts slice through floors and walls so the park path, light and trees pass straight through several storeys; the building becomes even more transparent, never enclosed' },
+  { id: 'jietian', name: '借天', en: 'Borrowed Sky', g: '綠',
+    q: 'What does the borrowed weather turn the hall into?', zh: '借進大廳的天氣，會把大廳變成什麼？',
+    cue: 'an ordinary library shuts the weather out; here the roofed concrete hall lets sky, sun, rain and wind in. Look for sky visible under a roof, sun patches or wet marks on the concrete floor',
+    low: 'fully indoor artificial light, or open air with no roof at all',
+    op: 'the weather moves indoors: a localized rain falls only inside the hall without wetting anyone, or an artificial sun hangs under the roof while mist drifts between the columns' },
+  { id: 'shawang', name: '紗望', en: 'Veiled View', g: '綠',
+    q: 'Is the city seen through the mesh the same city you find when you walk out?', zh: '隔著網看到的城市，和走出去看到的，是同一座嗎？',
+    cue: 'an ordinary library has small windows; here, from high up, the park and the whole city are seen through mesh and glass. Look for mesh or glass with a distant park or skyline behind it',
+    low: 'no distant view',
+    op: 'the distant city becomes translucent fabric sculpture: each tower sewn from sheer gauze, outlined in fine thread' },
+  { id: 'raoyou', name: '繞遊', en: 'Looping Walk', g: '綠',
+    q: 'If you keep circling, where do you end up?', zh: '一直繞下去，最後會到哪裡？',
+    cue: 'ordinary corridors run straight; here ramps coil around the atrium. Look for curved ramps, spiral stairs, curves continuing up or down',
+    low: 'straight circulation or none',
+    op: 'the ramp has no end: it loops upward coil after coil into the open sky, overturning everyday spatial order' },
+  { id: 'zhanren', name: '展人', en: 'Exhibited People', g: '美',
+    q: 'Beside the atrium, who is really watching whom?', zh: '在挑空旁邊，到底是誰在看誰？',
+    cue: 'in an ordinary museum people look at art; here the atrium lets people upstairs watch people below. Look for a high viewpoint looking down, atrium voids, railings, both watchers and watched in view',
+    low: 'only an empty atrium',
+    op: 'extreme height and inverted sightlines: the atrium stretches into an impossibly deep shaft where people below look like fish walking underwater, or the building flips so people seem to walk upside down on the ceiling' },
+  { id: 'shaiguang', name: '篩光', en: 'Sifted Light', g: '美',
+    q: 'What does light leave behind after it passes through the mesh?', zh: '光穿過網之後，留下了什麼？',
+    cue: 'ordinary museums control light artificially; here sunlight is sifted through mesh and thin columns into patterns. Look for clear mesh shadows, column shadows, slits of light on floors or walls',
+    low: 'flat overcast light',
+    op: 'light passing through the mesh turns into a granular material like fine sand, pouring from the openings and piling into dunes on the floor' },
+  { id: 'zizhan', name: '自展', en: 'Self-Exhibit', g: '美',
+    q: 'What is the artwork people stop to photograph most here?', zh: '在綠美圖，人最常停下來拍的作品是什麼？',
+    cue: 'in an ordinary museum only the art is looked at; here seats, lamps, stairs and the building itself are photographed as artworks. Look for close-ups of furniture or building parts as the subject, with no actual artwork',
+    low: 'a real artwork as subject, or a wide view',
+    op: 'scale shift: the soft cloud-shaped seats and fixtures swell into monumental sculptures several storeys tall, and people climb them like ants' },
+  { id: 'kuangwai', name: '框外', en: 'Framed Outside', g: '美',
+    q: 'Is a park framed by an opening still a park?', zh: '被開口框起來的公園，還算是公園嗎？',
+    cue: 'an ordinary museum frames paintings; here openings, oval voids and mesh frame the park and city outside. Look for a strong frame edge with a bright outdoor view inside it',
+    low: 'no framing',
+    op: 'the openings crop sky and park into flat planes of pure colour hanging in the air like paintings, impossible to tell from the real sky' },
+  { id: 'fangsheng', name: '放聲', en: 'Released Sound', g: '圖',
+    q: 'When the market noise rises upstairs, what is left of the library?', zh: '市集的聲音傳上樓之後，圖書館還剩下什麼？',
+    cue: 'an ordinary library demands silence; here markets, talks and concerts fill the ground floor and their sound rises through the atrium. Look for crowds, stages, speakers, instruments, stalls',
+    low: 'nobody there',
+    op: 'the noise of the crowd freezes into a suspended explosion of fireworks and smoke, hanging motionless above the hall' },
+  { id: 'liuren', name: '留人', en: 'Lingering', g: '圖',
+    q: 'Once you sit down, when do you leave?', zh: '坐下來之後，人什麼時候才會離開？',
+    cue: 'an ordinary library has rows of desks; here soft cloud-like seats and window counters keep people sitting, lying, lingering. Look for soft seating with people on it (empty soft seats count as medium)',
+    low: 'no seating',
+    op: 'the seats sag and swell like soft elastic sacks, slowly enveloping the people sitting in them' },
+  { id: 'zhandu', name: '展讀', en: 'Read as Exhibit', g: '圖',
+    q: 'Does anyone still read a book placed on a display stand?', zh: '放上展台的書，還有人讀嗎？',
+    cue: 'in an ordinary library books are for reading; here books sit on glass display stands like artworks. Look for books on display stands or glass tables, books and exhibits in one view',
+    low: 'ordinary shelves or no books',
+    op: 'giant scrolls hang down the atrium covered in characters that look like writing but cannot be read; people can only look up at them, never read them' },
+  { id: 'sanjia', name: '散架', en: 'Scattered Shelves', g: '圖',
+    q: 'When shelves are no longer taller than you, how do you find a book?', zh: '書架不再比人高之後，人要怎麼找到書？',
+    cue: 'an ordinary library has rows of shelves taller than people; here shelves are low, curved and scattered like islands. Look for low, curved, island-like shelves you can see over',
+    low: 'no shelves',
+    op: 'books hang in mid-air caught in a vast web of red thread; the classification order becomes a tangled net' },
 ];
 
+// 生成規則：只取超過門檻的標籤，最多三個；濃度決定強度
+const THRESHOLD = 40;
+const MAX_OPS = 3;
+const IMAGE_MODEL = 'gemini-3.1-flash-lite-image';
+const REQUEST_TIMEOUT_MS = 60000;
+const STYLE_REFS = ['styles/ref1.jpg'];
+const CFG_URL_KEY = 'surreallens_v6_worker_url';
+const CFG_TOKEN_KEY = 'surreallens_v6_worker_token';
+
 const $ = id => document.getElementById(id);
-const video = $('video'), still = $('still'), surreal = $('surreal'), panel = $('panel');
-let stream = null, source = null, mode = 'real', analysisTimer = null, captionTimer = null;
+const video = $('video'), still = $('still'), surreal = $('surreal'), result = $('result'), panel = $('panel');
+let stream = null, source = null, mode = 'real', busy = false, analysisTimer = null, captionTimer = null;
 
 function show(id) {
   for (const s of document.querySelectorAll('.screen')) s.classList.toggle('on', s.id === id);
@@ -202,13 +317,60 @@ function showError(msg) {
   $('errorMsg').textContent = msg;
   show('error');
 }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---------- 設定（存在這台裝置） ----------
+function loadCfg() {
+  try { return { url: (localStorage.getItem(CFG_URL_KEY) || '').trim(), token: localStorage.getItem(CFG_TOKEN_KEY) || '' }; }
+  catch (e) { return { url: '', token: '' }; }
+}
+function saveCfg(url, token) {
+  try { localStorage.setItem(CFG_URL_KEY, url.trim()); localStorage.setItem(CFG_TOKEN_KEY, token); return true; }
+  catch (e) { return false; }
+}
+function openSettings(msg) {
+  const cfg = loadCfg();
+  $('cfgUrl').value = cfg.url;
+  $('cfgToken').value = cfg.token;
+  $('healthMsg').textContent = msg || '';
+  $('settings').classList.add('on');
+}
+$('gearBtn').addEventListener('click', () => openSettings());
+$('closeBtn').addEventListener('click', () => $('settings').classList.remove('on'));
+$('saveBtn').addEventListener('click', () => {
+  const ok = saveCfg($('cfgUrl').value, $('cfgToken').value);
+  $('healthMsg').textContent = ok ? 'Saved on this device.' : 'Could not save (storage is blocked in this browser).';
+  if (ok) setTimeout(() => $('settings').classList.remove('on'), 600);
+});
+// /v1/health 只驗證 Worker 與通行碼，不會呼叫 Gemini，不花額度
+$('testBtn').addEventListener('click', async () => {
+  const url = $('cfgUrl').value.trim().replace(/\/+$/, ''), token = $('cfgToken').value;
+  if (!url || !token) { $('healthMsg').textContent = 'Fill in both fields first.'; return; }
+  $('healthMsg').textContent = 'Testing…';
+  try {
+    const res = await fetch(url + '/v1/health', { headers: { Authorization: 'Bearer ' + token } });
+    const body = await res.json().catch(() => null);
+    if (res.status === 200 && body) {
+      const q = body.quotaToday || {};
+      $('healthMsg').textContent = `Worker reached and token accepted. Calls used today: ${q.used}/${q.limit}. (This test never calls Gemini.)`;
+    } else if (res.status === 401) {
+      $('healthMsg').textContent = 'Worker reached, but the access token is wrong.';
+    } else {
+      $('healthMsg').textContent = `Unexpected reply (HTTP ${res.status}).`;
+    }
+  } catch (e) {
+    $('healthMsg').textContent = 'Could not reach the Worker. Check the URL, and that this page’s address is in the Worker’s ALLOWED_ORIGINS.';
+  }
+});
 
 // ---------- 面板 ----------
 const rows = {};
 for (const l of LABELS) {
   const row = document.createElement('button');
   row.className = 'row';
-  row.innerHTML = `<span class="name">${l.name}<em>${l.en}</em></span><span class="track"><span class="fill" style="background:var(--accent)"></span></span><span class="pct">0</span>`;
+  row.innerHTML = `<span class="name">${l.name}<em>${l.en}</em></span><span class="track"><span class="fill"></span></span><span class="pct">0</span>`;
   row.addEventListener('click', () =>
     showCaption(`<div class="q">${l.name} · ${l.en}<br>${l.q}</div><small>${l.zh}</small>`, 6000));
   $('labels').appendChild(row);
@@ -273,7 +435,7 @@ function sourceSize() {
 
 function enterLens() {
   show('lens');
-  setMode('real');
+  setReality();
   syncPanelHeight();
   startAnalysis();
 }
@@ -283,9 +445,9 @@ $('retryBtn').addEventListener('click', startCamera);
 $('demoBtn').addEventListener('click', startDemo);
 $('errorDemoBtn').addEventListener('click', startDemo);
 
-// ---------- 模擬濃度 ----------
-// 階段 0 沒有真正的模型：用畫面的亮度、對比、邊緣等粗略特徵，混合緩慢變化的隨機值，
-// 讓濃度條會隨鏡頭移動而跳動。數字本身沒有意義，只用來測試介面。
+// ---------- 即時濃度（模擬） ----------
+// 手機上還沒有真正的模型：用畫面的亮度、對比、邊緣等粗略特徵，混合緩慢變化的隨機值，
+// 讓濃度條隨鏡頭移動而跳動。按下 Heterotopia 後，才換成 Gemini 依定規判讀的真實數字。
 const probe = document.createElement('canvas');
 probe.width = 32; probe.height = 24;
 const pctx = probe.getContext('2d', { willReadFrequently: true });
@@ -349,19 +511,21 @@ function analyse() {
   render();
 }
 
-function render() {
+function render(usedIds) {
   const order = ranked();
   const top3 = new Set(order.slice(0, 3).map(x => x.id));
+  const used = new Set(usedIds || []);
   LABELS.forEach((l, i) => {
     const pct = Math.round(values[i] * 100);
     const row = rows[l.id];
     row.querySelector('.fill').style.width = pct + '%';
     row.querySelector('.pct').textContent = pct;
     row.classList.toggle('top', top3.has(l.id));
+    row.classList.toggle('used', used.has(l.id));
   });
   const top5 = order.slice(0, 5).reduce((s, x) => s + x.v, 0) / 5;
   $('total').textContent = Math.round(top5 * 100);
-  $('summary').textContent = order.slice(0, 3).map(x => `${x.name} ${Math.round(x.v * 100)}`).join('・');
+  $('summary').textContent = order.slice(0, 3).map(x => `${x.name} ${Math.round(x.v * 100)}`).join(' · ');
 }
 
 function startAnalysis() {
@@ -373,12 +537,11 @@ document.addEventListener('visibilitychange', () => {
   else if (source) startAnalysis();
 });
 
-// ---------- 異托邦（示意：篩光，光像沙一樣從亮處漏下、堆積） ----------
-// 階段 1 會改成：凍結畫面＋濃度 → Worker → Gemini 生成。
+// ---------- 等待動畫：篩光（光像沙一樣從亮處漏下、堆積） ----------
 const sctx = surreal.getContext('2d');
 const frozen = document.createElement('canvas');
 const fctx = frozen.getContext('2d');
-let W = 0, H = 0, dpr = 1, raf = 0, grains = [], heap = [], colW = 6, sources = [], spawned = 0;
+let W = 0, H = 0, dpr = 1, raf = 0, grains = [], heap = [], colW = 6, lightSources = [], spawned = 0, sandOn = false;
 
 function drawCover(ctx, src, sw, sh, w, h) {
   const s = Math.max(w / sw, h / sh), dw = sw * s, dh = sh * s;
@@ -403,9 +566,8 @@ function findLightSources() {
   return (bright.length > 12 ? bright : pts.slice(0, 40)).slice(0, 400);
 }
 
-function enterSurreal() {
+function startSand() {
   const [sw, sh] = sourceSize();
-  if (!sw) return;
   dpr = Math.min(window.devicePixelRatio || 1, 2);
   W = Math.round(innerWidth * dpr); H = Math.round(innerHeight * dpr);
   surreal.width = frozen.width = W; surreal.height = frozen.height = H;
@@ -413,16 +575,17 @@ function enterSurreal() {
   colW = Math.max(4, Math.round(3 * dpr));
   heap = new Float32Array(Math.ceil(W / colW) + 1);
   grains = []; spawned = 0;
-  sources = findLightSources();
+  lightSources = findLightSources();
   surreal.classList.remove('on'); void surreal.offsetWidth; surreal.classList.add('on');
-  const top = ranked().slice(0, 3);
-  showCaption(
-    `<div class="q">Strongest now: ${top.map(x => `${x.name} ${Math.round(x.v * 100)}%`).join(' · ')}</div>` +
-    `<small>Preview effect — 篩光 Sifted Light: light leaks from the brightest areas like sand and piles up. Later phases will generate the image with AI from these readings.</small>`,
-    6000
-  );
+  sandOn = true;
   cancelAnimationFrame(raf);
   raf = requestAnimationFrame(tick);
+}
+
+function stopSand() {
+  sandOn = false;
+  cancelAnimationFrame(raf);
+  surreal.classList.remove('on');
 }
 
 function settle() {
@@ -442,9 +605,9 @@ function tick() {
   sctx.fillRect(0, 0, W, H);
 
   const budget = W * 6;
-  if (spawned < budget && sources.length) {
+  if (spawned < budget && lightSources.length) {
     for (let k = 0; k < 14; k++) {
-      const s = sources[(Math.random() * sources.length) | 0];
+      const s = lightSources[(Math.random() * lightSources.length) | 0];
       grains.push({
         x: s.x + (Math.random() - 0.5) * 18 * dpr, y: s.y,
         vx: (Math.random() - 0.5) * 0.3 * dpr, vy: Math.random() * dpr,
@@ -480,23 +643,211 @@ function tick() {
   sctx.closePath();
   sctx.fill();
 
-  if (mode === 'surreal') raf = requestAnimationFrame(tick);
+  if (sandOn) raf = requestAnimationFrame(tick);
 }
 
-function setMode(m) {
-  mode = m;
-  $('modeReal').classList.toggle('on', m === 'real');
-  $('modeSurreal').classList.toggle('on', m === 'surreal');
-  if (m === 'surreal') enterSurreal();
-  else {
-    cancelAnimationFrame(raf);
-    surreal.classList.remove('on');
-    $('caption').classList.remove('on');
+// ---------- Worker 呼叫 ----------
+// 每次按下 Heterotopia 只呼叫一次：同一個請求裡判讀 12 個濃度並生成整張畫面。
+// 不自動重試：逾時代表「不知道 Gemini 有沒有處理」，不是「失敗」。
+async function callWorker(model, payload) {
+  const cfg = loadCfg();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(cfg.url.replace(/\/+$/, '') + '/v1/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.token },
+      body: JSON.stringify({ apiVersion: 'v1beta', model, payload }),
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch (e) {}
+    if (!res.ok) throw new Error(describeFailure(res.status, body, text));
+    return body;
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('The request timed out. It may or may not have been processed, so it was not retried.');
+    if (e instanceof TypeError) throw new Error('Could not reach the Worker. Check your connection, and that this page’s address is in the Worker’s ALLOWED_ORIGINS.');
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
 }
-$('modeReal').addEventListener('click', () => setMode('real'));
-$('modeSurreal').addEventListener('click', () => setMode('surreal'));
-addEventListener('resize', () => { syncPanelHeight(); if (mode === 'surreal') setMode('real'); });
+
+function describeFailure(status, body, text) {
+  const slug = body && body.error && (typeof body.error === 'string' ? body.error : body.error.message);
+  if (status === 401) return 'The access token was rejected. Check it in settings.';
+  if (slug === 'daily_quota_reached') return 'Today’s Worker quota is used up.';
+  if (status === 429) return 'Too many requests right now. Wait a minute and try again.';
+  if (status === 413) return 'The frame was too large to send.';
+  return `The Worker or Gemini returned an error (HTTP ${status}): ${String(slug || text).slice(0, 160)}`;
+}
+
+function partsOf(body) {
+  const c = body && body.candidates && body.candidates[0];
+  return (c && c.content && c.content.parts) || [];
+}
+
+function captureFrame(maxSide) {
+  const [sw, sh] = sourceSize();
+  const s = Math.min(1, maxSide / Math.max(sw, sh));
+  const c = document.createElement('canvas');
+  c.width = Math.round(sw * s); c.height = Math.round(sh * s);
+  c.getContext('2d').drawImage(source, 0, 0, c.width, c.height);
+  return { b64: c.toDataURL('image/jpeg', 0.85).split(',')[1], w: c.width, h: c.height };
+}
+
+const styleCache = {};
+async function loadStyleRef(path) {
+  if (styleCache[path]) return styleCache[path];
+  const blob = await (await fetch(path)).blob();
+  const b64 = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+  return (styleCache[path] = b64);
+}
+
+// 一次呼叫同時完成：先依判斷依據打 12 個濃度，再依門檻規則生成整張畫面。
+// 模型先輸出一行 JSON（只給濃度條用，不顯示成說明文字），再輸出圖片。
+function lensPrompt() {
+  const lines = LABELS.map(l =>
+    `- ${l.id} (${l.name}, ${l.en}). Cues: ${l.cue}. Low when: ${l.low}. Operation: ${l.op}.`).join('\n');
+  return `Image 1 is a live photo taken at the Taichung Green Museumbrary, a library and art museum by SANAA set inside a park.
+The other images are style references only.
+
+STEP 1 — Score how strongly image 1 shows each of the 12 relations below, from 0 to 100, using its cues.
+0 = absent. 50 = clearly present but not dominant. 100 = it defines the image.
+Judge only what is visible. If the photo is not the Green Museumbrary, or is an ordinary place, most scores should be low.
+
+STEP 2 — Take only the relations scoring above ${THRESHOLD}, at most ${MAX_OPS}, strongest first, and apply their operations:
+41–59 = a subtle hint, 60–79 = clearly visible, 80–100 = dominant, reshaping the whole scene.
+Create a contemporary surrealist image of the SAME place from the SAME viewpoint as image 1.
+Transform the whole frame, not a small overlay, while keeping the architecture recognizable: its thin columns, mesh, glass, ramps and white, airy transparency, and the composition of image 1.
+Follow the style references for rendering quality, realism, light, palette and calm, airy mood. Do not copy their objects or layout.
+Never enclose or darken the building; it must stay light and transparent.
+No captions, logos or watermarks. Photorealistic and highly detailed.
+If no relation scores above ${THRESHOLD}, do not create an image.
+
+Relations:
+${lines}
+
+OUTPUT: first one line of JSON and nothing else in text, exactly like {"scores":{"${LABELS.map(l => l.id).join('":0,"')}":0}}, then the image.`;
+}
+
+function chooseOps(scores) {
+  return LABELS.map(l => ({ ...l, pct: scores[l.id] }))
+    .filter(x => x.pct > THRESHOLD)
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, MAX_OPS);
+}
+
+function parseScores(text) {
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(m[0]);
+    const src = parsed.scores || parsed;
+    const scores = {};
+    for (const l of LABELS) {
+      const v = Number(src[l.id]);
+      scores[l.id] = Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : 0;
+    }
+    return scores;
+  } catch (e) { return null; }
+}
+
+function aspectFor(w, h) {
+  const r = w / h;
+  if (r < 0.9) return '3:4';
+  if (r > 1.1) return '4:3';
+  return '1:1';
+}
+
+async function transformFrame(frame) {
+  const refs = await Promise.all(STYLE_REFS.map(loadStyleRef));
+  const body = await callWorker(IMAGE_MODEL, {
+    contents: [{ role: 'user', parts: [
+      { inline_data: { mime_type: 'image/jpeg', data: frame.b64 } },
+      ...refs.map(b64 => ({ inline_data: { mime_type: 'image/jpeg', data: b64 } })),
+      { text: lensPrompt() },
+    ] }],
+    generationConfig: { candidateCount: 1, responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: aspectFor(frame.w, frame.h) } },
+  });
+  const parts = partsOf(body);
+  const scores = parseScores(parts.map(p => p.text || '').join(''));
+  const img = parts.map(p => p.inlineData || p.inline_data).find(Boolean);
+  const dataUrl = img && img.data ? `data:${img.mimeType || img.mime_type || 'image/png'};base64,${img.data}` : null;
+  return { scores, dataUrl };
+}
+
+// ---------- 模式 ----------
+function setButtons() {
+  $('modeReal').classList.toggle('on', mode === 'real');
+  $('modeSurreal').classList.toggle('on', mode !== 'real');
+  $('modeReal').disabled = busy;
+  $('modeSurreal').disabled = busy;
+}
+
+function setReality() {
+  mode = 'real';
+  stopSand();
+  result.classList.remove('on');
+  $('caption').classList.remove('on');
+  $('badge').textContent = 'Simulated';
+  $('badge').classList.remove('live');
+  setButtons();
+}
+
+async function goHeterotopia() {
+  if (busy || mode !== 'real') return;
+  const cfg = loadCfg();
+  if (!cfg.url || !cfg.token) { openSettings('Set up the Worker connection first.'); return; }
+  const [sw] = sourceSize();
+  if (!sw) return;
+
+  busy = true; mode = 'busy';
+  setButtons();
+  $('caption').classList.remove('on');
+  const frame = captureFrame(1024);
+  startSand();
+
+  try {
+    const { scores, dataUrl } = await transformFrame(frame);
+    const ops = scores ? chooseOps(scores) : [];
+    if (scores) {
+      LABELS.forEach((l, i) => { values[i] = scores[l.id] / 100; });
+      render(ops.map(o => o.id));
+      $('badge').textContent = 'AI reading';
+      $('badge').classList.add('live');
+    }
+
+    if (scores && !ops.length) {
+      stopSand();
+      mode = 'result';
+      showCaption(`<div class="q">Too ordinary to transform — nothing passes ${THRESHOLD}%.</div>`, 5000);
+      return;
+    }
+    if (!dataUrl) throw new Error('Gemini answered, but without an image.');
+
+    result.onload = () => { stopSand(); result.classList.remove('on'); void result.offsetWidth; result.classList.add('on'); };
+    result.src = dataUrl;
+    mode = 'result';
+  } catch (e) {
+    stopSand();
+    mode = 'real';
+    showCaption(`<div class="q err">Couldn’t open the heterotopia.</div><small>${escapeHtml(e.message)}</small>`, 8000);
+  } finally {
+    busy = false;
+    setButtons();
+  }
+}
+
+$('modeReal').addEventListener('click', () => { if (!busy) setReality(); });
+$('modeSurreal').addEventListener('click', goHeterotopia);
+addEventListener('resize', () => { syncPanelHeight(); });
 </script>
 </body>
 </html>
