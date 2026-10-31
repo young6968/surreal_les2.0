@@ -61,10 +61,12 @@ button:disabled { opacity: .45; cursor: default; }
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
 }
 #still, #surreal, #result { display: none; }
-#surreal.on { display: block; animation: develop 1.1s ease-out; }
+#surreal.on { display: block; animation: fade-wait 2.4s ease-in-out infinite alternate; }
 #result.on { display: block; animation: reveal 1.6s ease-out; }
-@keyframes develop { from { filter: brightness(2.2) saturate(.2); } to { filter: none; } }
+@keyframes fade-wait { from { filter: brightness(1) saturate(1); } to { filter: brightness(1.18) saturate(.55); } }
 @keyframes reveal { from { opacity: 0; filter: brightness(1.8) blur(6px); } to { opacity: 1; filter: none; } }
+.badge.waiting { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .45; } }
 
 .topbar {
   position: absolute; left: 0; right: 0; top: 0;
@@ -82,7 +84,7 @@ button:disabled { opacity: .45; cursor: default; }
 .badge { font-size: 11px; color: var(--ink-soft); }
 .badge.live { color: var(--accent); border-color: rgba(63,143,115,.4); }
 .gear { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; font-size: 16px; }
-@media (max-width: 400px) { .brand { display: none; } }
+@media (max-width: 300px) { .brand { display: none; } }
 
 .caption {
   position: absolute; left: 16px; right: 16px;
@@ -98,41 +100,36 @@ button:disabled { opacity: .45; cursor: default; }
 .caption a { color: var(--accent); }
 
 /* ---------- 下方半透明面板 ---------- */
+/* 不再是一大塊面板：白字直接疊在畫面上，底部只有一層淡淡的漸層讓白字在白色建築上也讀得到 */
 .panel {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  background: var(--glass); backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2);
-  border-top: 1px solid var(--line); border-radius: 22px 22px 0 0;
-  padding: 6px 12px calc(12px + env(safe-area-inset-bottom));
+  position: absolute; left: 0; right: 0; bottom: 0; color: #fff;
+  background: linear-gradient(to top, rgba(18,26,23,.5), rgba(18,26,23,.22) 65%, rgba(18,26,23,0));
+  padding: 18px 14px calc(10px + env(safe-area-inset-bottom));
+  text-shadow: 0 1px 3px rgba(0,0,0,.55);
 }
-.handle { display: block; margin: 0 auto 6px; width: 44px; height: 18px; position: relative; }
-.handle::after { content: ""; position: absolute; left: 6px; right: 6px; top: 7px; height: 4px; border-radius: 4px; background: rgba(31,42,39,.22); }
-.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.seg { display: inline-flex; background: rgba(31,42,39,.06); border-radius: 999px; padding: 3px; }
-.seg button { padding: 8px 16px; border-radius: 999px; font-size: 14px; color: var(--ink-soft); min-height: 36px; }
-.seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 6px rgba(31,42,39,.12); }
-.summary { font-size: 12px; color: var(--ink-soft); text-align: right; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.handle { display: block; margin: 0 auto 4px; width: 44px; height: 14px; position: relative; }
+.handle::after { content: ""; position: absolute; left: 8px; right: 8px; top: 5px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.7); }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.seg { display: inline-flex; background: rgba(255,255,255,.2); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-radius: 999px; padding: 2px; text-shadow: none; }
+.seg button { padding: 6px 13px; border-radius: 999px; font-size: 13px; color: #fff; min-height: 32px; }
+.seg button.on { background: rgba(255,255,255,.92); color: var(--ink); }
+.summary { font-size: 12px; color: rgba(255,255,255,.9); text-align: right; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.labels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.labels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 14px; }
 .row {
   display: grid; grid-template-columns: 1fr auto; grid-template-areas: "name pct" "track track";
-  align-items: center; gap: 3px 6px; padding: 4px 0; width: 100%; text-align: left;
+  align-items: center; gap: 2px 4px; padding: 3px 0; width: 100%; text-align: left; color: #fff;
 }
-.row .name { grid-area: name; font-size: 13px; }
-.row .name em { font-style: normal; font-size: 11px; color: var(--ink-soft); margin-left: 4px; }
-.row .pct { grid-area: pct; font-size: 12px; color: var(--ink-soft); text-align: right; font-variant-numeric: tabular-nums; }
-.row .track { grid-area: track; display: block; height: 5px; border-radius: 5px; background: rgba(31,42,39,.08); overflow: hidden; }
-.row .fill { display: block; height: 100%; width: 0; border-radius: 5px; background: var(--accent); transition: width .25s linear; }
-.row.top .name { font-weight: 600; }
-.row.top .pct { color: var(--ink); font-weight: 600; }
-.row.used .fill { background: var(--ink); }
+.row .name { grid-area: name; font-size: 12px; opacity: .9; }
+.row .name em { display: none; }
+.row .pct { grid-area: pct; font-size: 11px; opacity: .8; text-align: right; font-variant-numeric: tabular-nums; }
+.row .track { grid-area: track; display: block; height: 2px; border-radius: 2px; background: rgba(255,255,255,.28); overflow: hidden; }
+.row .fill { display: block; height: 100%; width: 0; border-radius: 2px; background: rgba(255,255,255,.9); transition: width .25s linear; }
+.row.top .name, .row.top .pct { opacity: 1; font-weight: 600; }
+.row.used .fill { background: #8fe6c2; }
 
 .panel.min .labels { display: none; }
 .panel.min .panel-head { margin-bottom: 0; }
-
-@media (max-width: 360px) {
-  .labels { gap: 0 10px; }
-  .row .name em { display: none; }
-}
 
 /* ---------- 設定 ---------- */
 #settings {
@@ -188,7 +185,6 @@ button:disabled { opacity: .45; cursor: default; }
 
   <header class="topbar">
     <div class="brand">SurrealLens</div>
-    <div class="pill">Museumbrary <b id="total">--</b>%</div>
     <div class="right">
       <div id="badge" class="badge">Simulated</div>
       <button id="gearBtn" class="gear" aria-label="Settings">⚙</button>
@@ -523,8 +519,6 @@ function render(usedIds) {
     row.classList.toggle('top', top3.has(l.id));
     row.classList.toggle('used', used.has(l.id));
   });
-  const top5 = order.slice(0, 5).reduce((s, x) => s + x.v, 0) / 5;
-  $('total').textContent = Math.round(top5 * 100);
   $('summary').textContent = order.slice(0, 3).map(x => `${x.name} ${Math.round(x.v * 100)}`).join(' · ');
 }
 
@@ -537,113 +531,28 @@ document.addEventListener('visibilitychange', () => {
   else if (source) startAnalysis();
 });
 
-// ---------- 等待動畫：篩光（光像沙一樣從亮處漏下、堆積） ----------
+// ---------- 等待：凍結畫面，安靜地變淡，直到圖出現 ----------
 const sctx = surreal.getContext('2d');
-const frozen = document.createElement('canvas');
-const fctx = frozen.getContext('2d');
-let W = 0, H = 0, dpr = 1, raf = 0, grains = [], heap = [], colW = 6, lightSources = [], spawned = 0, sandOn = false;
 
 function drawCover(ctx, src, sw, sh, w, h) {
   const s = Math.max(w / sw, h / sh), dw = sw * s, dh = sh * s;
   ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
 }
 
-function findLightSources() {
-  const lw = 48, lh = Math.max(8, Math.round(48 * H / W));
-  const low = document.createElement('canvas');
-  low.width = lw; low.height = lh;
-  const lctx = low.getContext('2d');
-  lctx.drawImage(frozen, 0, 0, lw, lh);
-  const d = lctx.getImageData(0, 0, lw, lh).data, pts = [];
-  for (let y = 0; y < lh * 0.8; y++)
-    for (let x = 0; x < lw; x++) {
-      const i = (y * lw + x) * 4;
-      const l = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
-      pts.push({ x: (x + 0.5) / lw * W, y: (y + 0.5) / lh * H, l });
-    }
-  pts.sort((a, b) => b.l - a.l);
-  const bright = pts.filter(p => p.l > 0.78);
-  return (bright.length > 12 ? bright : pts.slice(0, 40)).slice(0, 400);
-}
-
-function startSand() {
+function freezeFrame() {
   const [sw, sh] = sourceSize();
-  dpr = Math.min(window.devicePixelRatio || 1, 2);
-  W = Math.round(innerWidth * dpr); H = Math.round(innerHeight * dpr);
-  surreal.width = frozen.width = W; surreal.height = frozen.height = H;
-  drawCover(fctx, source, sw, sh, W, H);
-  colW = Math.max(4, Math.round(3 * dpr));
-  heap = new Float32Array(Math.ceil(W / colW) + 1);
-  grains = []; spawned = 0;
-  lightSources = findLightSources();
-  surreal.classList.remove('on'); void surreal.offsetWidth; surreal.classList.add('on');
-  sandOn = true;
-  cancelAnimationFrame(raf);
-  raf = requestAnimationFrame(tick);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  surreal.width = Math.round(innerWidth * dpr);
+  surreal.height = Math.round(innerHeight * dpr);
+  drawCover(sctx, source, sw, sh, surreal.width, surreal.height);
+  surreal.classList.add('on');
+  $('badge').textContent = 'Painting…';
+  $('badge').classList.add('waiting');
 }
 
-function stopSand() {
-  sandOn = false;
-  cancelAnimationFrame(raf);
+function unfreeze() {
   surreal.classList.remove('on');
-}
-
-function settle() {
-  const maxStep = colW * 1.2;
-  for (let pass = 0; pass < 2; pass++)
-    for (let i = 1; i < heap.length - 1; i++) {
-      for (const j of [i - 1, i + 1]) {
-        const diff = heap[i] - heap[j];
-        if (diff > maxStep) { const m = (diff - maxStep) / 2; heap[i] -= m; heap[j] += m; }
-      }
-    }
-}
-
-function tick() {
-  sctx.drawImage(frozen, 0, 0);
-  sctx.fillStyle = 'rgba(255,255,255,0.06)';
-  sctx.fillRect(0, 0, W, H);
-
-  const budget = W * 6;
-  if (spawned < budget && lightSources.length) {
-    for (let k = 0; k < 14; k++) {
-      const s = lightSources[(Math.random() * lightSources.length) | 0];
-      grains.push({
-        x: s.x + (Math.random() - 0.5) * 18 * dpr, y: s.y,
-        vx: (Math.random() - 0.5) * 0.3 * dpr, vy: Math.random() * dpr,
-        r: (0.8 + Math.random() * 1.4) * dpr,
-      });
-      spawned++;
-    }
-  }
-
-  // 光砂堆在面板上緣，才不會被面板擋住
-  const floor = H - panel.offsetHeight * dpr;
-  sctx.fillStyle = 'rgba(255,248,228,0.95)';
-  const g = 0.14 * dpr, keep = [];
-  for (const p of grains) {
-    p.vy += g; p.x += p.vx; p.y += p.vy;
-    const col = Math.max(0, Math.min(heap.length - 1, (p.x / colW) | 0));
-    if (p.y >= floor - heap[col]) { heap[col] += p.r * 1.1; continue; }
-    sctx.fillRect(p.x, p.y, p.r, p.r);
-    keep.push(p);
-  }
-  grains = keep;
-  settle();
-
-  const grad = sctx.createLinearGradient(0, floor - H * 0.3, 0, floor);
-  grad.addColorStop(0, 'rgba(255,252,240,0.92)');
-  grad.addColorStop(1, 'rgba(244,234,210,0.96)');
-  sctx.fillStyle = grad;
-  sctx.beginPath();
-  sctx.moveTo(0, H);
-  sctx.lineTo(0, floor - heap[0]);
-  for (let i = 0; i < heap.length; i++) sctx.lineTo(i * colW, floor - heap[i]);
-  sctx.lineTo(W, H);
-  sctx.closePath();
-  sctx.fill();
-
-  if (sandOn) raf = requestAnimationFrame(tick);
+  $('badge').classList.remove('waiting');
 }
 
 // ---------- Worker 呼叫 ----------
@@ -793,7 +702,7 @@ function setButtons() {
 
 function setReality() {
   mode = 'real';
-  stopSand();
+  unfreeze();
   result.classList.remove('on');
   $('caption').classList.remove('on');
   $('badge').textContent = 'Simulated';
@@ -812,7 +721,7 @@ async function goHeterotopia() {
   setButtons();
   $('caption').classList.remove('on');
   const frame = captureFrame(1024);
-  startSand();
+  freezeFrame();
 
   try {
     const { scores, dataUrl } = await transformFrame(frame);
@@ -825,18 +734,18 @@ async function goHeterotopia() {
     }
 
     if (scores && !ops.length) {
-      stopSand();
+      unfreeze();
       mode = 'result';
       showCaption(`<div class="q">Too ordinary to transform — nothing passes ${THRESHOLD}%.</div>`, 5000);
       return;
     }
     if (!dataUrl) throw new Error('Gemini answered, but without an image.');
 
-    result.onload = () => { stopSand(); result.classList.remove('on'); void result.offsetWidth; result.classList.add('on'); };
+    result.onload = () => { unfreeze(); result.classList.remove('on'); void result.offsetWidth; result.classList.add('on'); };
     result.src = dataUrl;
     mode = 'result';
   } catch (e) {
-    stopSand();
+    unfreeze();
     mode = 'real';
     showCaption(`<div class="q err">Couldn’t open the heterotopia.</div><small>${escapeHtml(e.message)}</small>`, 8000);
   } finally {
