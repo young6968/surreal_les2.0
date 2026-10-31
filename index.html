@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#fbfcfb">
+<title>SurrealLens V6</title>
+<style>
+:root {
+  --bg: #fbfcfb;
+  --ink: #1f2a27;
+  --ink-soft: #5d6b67;
+  --line: rgba(31, 42, 39, .12);
+  --glass: rgba(255, 255, 255, .76);
+  --glass-strong: rgba(255, 255, 255, .92);
+  --accent: #3f8f73;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+body { overflow: hidden; }
+button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+
+.screen { position: fixed; inset: 0; display: none; }
+.screen.on { display: block; }
+
+/* ---------- 入口 ---------- */
+#entry, #error {
+  flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 24px 16px; gap: 18px;
+  /* 淡淡的菱形網格，呼應擴張網 */
+  background:
+    repeating-linear-gradient(60deg, rgba(31,42,39,.035) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(-60deg, rgba(31,42,39,.035) 0 1px, transparent 1px 22px),
+    var(--bg);
+}
+#entry.on, #error.on { display: flex; }
+.mark { font-size: 13px; letter-spacing: .32em; color: var(--ink-soft); }
+.title { font-size: 34px; font-weight: 300; letter-spacing: .04em; }
+.subtitle { font-size: 16px; color: var(--ink-soft); line-height: 1.7; }
+.primary {
+  margin-top: 8px; padding: 14px 34px; border-radius: 999px;
+  background: var(--glass-strong); border: 1px solid var(--line);
+  box-shadow: 0 6px 24px rgba(31,42,39,.08); font-size: 17px; letter-spacing: .08em;
+}
+.primary:active { transform: scale(.98); }
+.link { font-size: 14px; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 4px; }
+.note { font-size: 12px; color: var(--ink-soft); max-width: 320px; line-height: 1.6; }
+
+/* ---------- 鏡頭 ---------- */
+#lens { background: #fff; }
+#video, #still, #surreal {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+}
+#still { display: none; }
+#surreal { display: none; }
+#surreal.on { display: block; animation: develop 1.1s ease-out; }
+@keyframes develop { from { filter: brightness(2.2) saturate(.2); } to { filter: none; } }
+
+.topbar {
+  position: absolute; left: 0; right: 0; top: 0;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+}
+.brand, .pill, .badge {
+  background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px;
+  white-space: nowrap;
+}
+@media (max-width: 400px) { .brand { display: none; } }
+.brand { letter-spacing: .12em; }
+.pill b { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.badge { font-size: 11px; color: var(--ink-soft); }
+
+.caption {
+  position: absolute; left: 16px; right: 16px;
+  bottom: calc(var(--panel-h, 260px) + 12px);
+  background: var(--glass-strong); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px;
+  font-size: 14px; line-height: 1.6; display: none;
+}
+.caption.on { display: block; }
+.caption .q { font-size: 15px; }
+.caption small { display: block; margin-top: 4px; color: var(--ink-soft); font-size: 12px; }
+
+/* ---------- 下方半透明面板 ---------- */
+.panel {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background: var(--glass); backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  border-top: 1px solid var(--line); border-radius: 22px 22px 0 0;
+  padding: 6px 12px calc(12px + env(safe-area-inset-bottom));
+}
+.handle { display: block; margin: 0 auto 6px; width: 44px; height: 18px; position: relative; }
+.handle::after { content: ""; position: absolute; left: 6px; right: 6px; top: 7px; height: 4px; border-radius: 4px; background: rgba(31,42,39,.22); }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.seg { display: inline-flex; background: rgba(31,42,39,.06); border-radius: 999px; padding: 3px; }
+.seg button { padding: 8px 16px; border-radius: 999px; font-size: 14px; color: var(--ink-soft); min-height: 36px; }
+.seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 6px rgba(31,42,39,.12); }
+.summary { font-size: 12px; color: var(--ink-soft); text-align: right; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.labels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.row {
+  display: grid; grid-template-columns: 1fr auto; grid-template-areas: "name pct" "track track";
+  align-items: center; gap: 3px 6px; padding: 4px 0; width: 100%; text-align: left;
+}
+.row .name { grid-area: name; font-size: 13px; }
+.row .name em { font-style: normal; font-size: 11px; color: var(--ink-soft); margin-left: 4px; }
+.row .pct { grid-area: pct; font-size: 12px; color: var(--ink-soft); text-align: right; font-variant-numeric: tabular-nums; }
+.row .track { grid-area: track; display: block; height: 5px; border-radius: 5px; background: rgba(31,42,39,.08); overflow: hidden; }
+.row .fill { display: block; height: 100%; width: 0; border-radius: 5px; transition: width .25s linear; }
+.row.top .name { font-weight: 600; }
+.row.top .pct { color: var(--ink); font-weight: 600; }
+
+.panel.min .labels { display: none; }
+.panel.min .panel-head { margin-bottom: 0; }
+
+@media (max-width: 360px) {
+  .labels { gap: 0 10px; }
+  .row .name em { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- 入口 -->
+<section id="entry" class="screen on">
+  <div class="mark">GREEN MUSEUMBRARY · HETEROTOPIA LENS</div>
+  <h1 class="title">SurrealLens</h1>
+  <p class="subtitle">Point the lens at the Green Museumbrary<br>and see what makes it unlike any other library.</p>
+  <button id="startBtn" class="primary">Open Lens</button>
+  <button id="demoBtn" class="link">No camera? Try a sample photo</button>
+  <p class="note">Frames are analysed on your device and never uploaded.<br>Interface prototype (phase 0): readings are simulated.</p>
+</section>
+
+<!-- 錯誤 -->
+<section id="error" class="screen">
+  <div class="mark">CAN'T OPEN THE CAMERA</div>
+  <p id="errorMsg" class="subtitle"></p>
+  <button id="retryBtn" class="primary">Try again</button>
+  <button id="errorDemoBtn" class="link">Use the sample photo</button>
+</section>
+
+<!-- 鏡頭 -->
+<section id="lens" class="screen">
+  <video id="video" playsinline muted autoplay></video>
+  <img id="still" alt="">
+  <canvas id="surreal"></canvas>
+
+  <header class="topbar">
+    <div class="brand">SurrealLens</div>
+    <div class="pill">Museumbrary <b id="total">--</b>%</div>
+    <div class="badge">Simulated</div>
+  </header>
+
+  <div id="caption" class="caption"></div>
+
+  <section id="panel" class="panel">
+    <button id="handle" class="handle" aria-label="Collapse or expand the panel"></button>
+    <div class="panel-head">
+      <div class="seg">
+        <button id="modeReal" class="on">Reality</button>
+        <button id="modeSurreal">Heterotopia</button>
+      </div>
+      <div id="summary" class="summary"></div>
+    </div>
+    <div id="labels" class="labels"></div>
+  </section>
+</section>
+
+<script>
+// ---------- 十二標籤（見 綠美圖_十二標籤.md） ----------
+// g 是推導時的身分（綠／美／圖），介面不顯示，留給之後分析用。
+const LABELS = [
+  { id: 'chuantang', name: '穿堂', en: 'Passing Through',   g: '綠', q: 'At which step do you actually "enter" when you walk in from the park?', zh: '從公園走進大廳，是在哪一步「進來」的？' },
+  { id: 'jietian',   name: '借天', en: 'Borrowed Sky',      g: '綠', q: 'What does the borrowed weather turn the hall into?', zh: '借進大廳的天氣，會把大廳變成什麼？' },
+  { id: 'shawang',   name: '紗望', en: 'Veiled View',       g: '綠', q: 'Is the city seen through the mesh the same city you find when you walk out?', zh: '隔著網看到的城市，和走出去看到的，是同一座嗎？' },
+  { id: 'raoyou',    name: '繞遊', en: 'Looping Walk',      g: '綠', q: 'If you keep circling, where do you end up?', zh: '一直繞下去，最後會到哪裡？' },
+  { id: 'zhanren',   name: '展人', en: 'Exhibited People',  g: '美', q: 'Beside the atrium, who is really watching whom?', zh: '在挑空旁邊，到底是誰在看誰？' },
+  { id: 'shaiguang', name: '篩光', en: 'Sifted Light',      g: '美', q: 'What does light leave behind after it passes through the mesh?', zh: '光穿過網之後，留下了什麼？' },
+  { id: 'zizhan',    name: '自展', en: 'Self-Exhibit',      g: '美', q: 'What is the artwork people stop to photograph most here?', zh: '在綠美圖，人最常停下來拍的作品是什麼？' },
+  { id: 'kuangwai',  name: '框外', en: 'Framed Outside',    g: '美', q: 'Is a park framed by an opening still a park?', zh: '被開口框起來的公園，還算是公園嗎？' },
+  { id: 'fangsheng', name: '放聲', en: 'Released Sound',    g: '圖', q: 'When the market noise rises upstairs, what is left of the library?', zh: '市集的聲音傳上樓之後，圖書館還剩下什麼？' },
+  { id: 'liuren',    name: '留人', en: 'Lingering',         g: '圖', q: 'Once you sit down, when do you leave?', zh: '坐下來之後，人什麼時候才會離開？' },
+  { id: 'zhandu',    name: '展讀', en: 'Read as Exhibit',   g: '圖', q: 'Does anyone still read a book placed on a display stand?', zh: '放上展台的書，還有人讀嗎？' },
+  { id: 'sanjia',    name: '散架', en: 'Scattered Shelves', g: '圖', q: 'When shelves are no longer taller than you, how do you find a book?', zh: '書架不再比人高之後，人要怎麼找到書？' },
+];
+
+const $ = id => document.getElementById(id);
+const video = $('video'), still = $('still'), surreal = $('surreal'), panel = $('panel');
+let stream = null, source = null, mode = 'real', analysisTimer = null, captionTimer = null;
+
+function show(id) {
+  for (const s of document.querySelectorAll('.screen')) s.classList.toggle('on', s.id === id);
+}
+function showError(msg) {
+  $('errorMsg').textContent = msg;
+  show('error');
+}
+
+// ---------- 面板 ----------
+const rows = {};
+for (const l of LABELS) {
+  const row = document.createElement('button');
+  row.className = 'row';
+  row.innerHTML = `<span class="name">${l.name}<em>${l.en}</em></span><span class="track"><span class="fill" style="background:var(--accent)"></span></span><span class="pct">0</span>`;
+  row.addEventListener('click', () =>
+    showCaption(`<div class="q">${l.name} · ${l.en}<br>${l.q}</div><small>${l.zh}</small>`, 6000));
+  $('labels').appendChild(row);
+  rows[l.id] = row;
+}
+function syncPanelHeight() {
+  document.documentElement.style.setProperty('--panel-h', panel.offsetHeight + 'px');
+}
+$('handle').addEventListener('click', () => { panel.classList.toggle('min'); syncPanelHeight(); });
+
+function showCaption(html, ms) {
+  const c = $('caption');
+  c.innerHTML = html;
+  c.classList.add('on');
+  clearTimeout(captionTimer);
+  if (ms) captionTimer = setTimeout(() => c.classList.remove('on'), ms);
+}
+
+// ---------- 來源：相機或示範照片 ----------
+async function startCamera() {
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return showError('The camera only works on an HTTPS or localhost address. Open the right address, or try the sample photo.');
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+  } catch (e) {
+    return showError(e.name === 'NotAllowedError'
+      ? 'Camera access was denied. Allow this site to use the camera in your browser settings, then try again.'
+      : 'No usable camera was found.');
+  }
+  video.srcObject = stream;
+  video.style.display = 'block';
+  still.style.display = 'none';
+  await video.play().catch(() => {});
+  source = video;
+  enterLens();
+}
+
+function startDemo() {
+  stopCamera();
+  still.onload = () => {
+    video.style.display = 'none';
+    still.style.display = 'block';
+    source = still;
+    enterLens();
+  };
+  still.src = 'samples/demo.jpg';
+}
+
+function stopCamera() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+}
+
+function sourceSize() {
+  return source === video
+    ? [video.videoWidth, video.videoHeight]
+    : [still.naturalWidth, still.naturalHeight];
+}
+
+function enterLens() {
+  show('lens');
+  setMode('real');
+  syncPanelHeight();
+  startAnalysis();
+}
+
+$('startBtn').addEventListener('click', startCamera);
+$('retryBtn').addEventListener('click', startCamera);
+$('demoBtn').addEventListener('click', startDemo);
+$('errorDemoBtn').addEventListener('click', startDemo);
+
+// ---------- 模擬濃度 ----------
+// 階段 0 沒有真正的模型：用畫面的亮度、對比、邊緣等粗略特徵，混合緩慢變化的隨機值，
+// 讓濃度條會隨鏡頭移動而跳動。數字本身沒有意義，只用來測試介面。
+const probe = document.createElement('canvas');
+probe.width = 32; probe.height = 24;
+const pctx = probe.getContext('2d', { willReadFrequently: true });
+const values = LABELS.map(() => 0.3);
+const drift = LABELS.map(() => Math.random());
+
+function sampleFeatures() {
+  pctx.drawImage(source, 0, 0, 32, 24);
+  const d = pctx.getImageData(0, 0, 32, 24).data;
+  const n = 32 * 24, lum = new Float32Array(n);
+  let sum = 0, sum2 = 0, top = 0, green = 0, sat = 0, edges = 0;
+  for (let i = 0; i < n; i++) {
+    const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+    const l = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    lum[i] = l; sum += l; sum2 += l * l;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    sat += mx ? (mx - mn) / mx : 0;
+    if (g > r * 1.08 && g > b * 1.08) green++;
+    if (i < 32 * 8) top += l;
+  }
+  for (let y = 0; y < 24; y++)
+    for (let x = 1; x < 32; x++) edges += Math.abs(lum[y * 32 + x] - lum[y * 32 + x - 1]);
+  const mean = sum / n;
+  return {
+    mean, contrast: Math.sqrt(Math.max(0, sum2 / n - mean * mean)),
+    top: top / (32 * 8), green: green / n, sat: sat / n, edges: edges / (24 * 31),
+  };
+}
+
+function heuristics(f) {
+  const c = v => Math.max(0, Math.min(1, v));
+  return {
+    chuantang: c(f.top * 0.6 + f.green * 1.2),
+    jietian:   c((f.top - 0.55) * 2.2),
+    shawang:   c(f.edges * 4 * (1 - f.sat)),
+    raoyou:    c(f.edges * 3),
+    zhanren:   c(f.contrast * 1.6),
+    shaiguang: c(f.contrast * 3.5 * f.mean),
+    zizhan:    c((1 - f.edges * 4) * 0.8),
+    kuangwai:  c((f.top - f.mean) * 3 + 0.3),
+    fangsheng: c(f.sat * 1.4),
+    liuren:    c((1 - f.contrast * 2) * 0.7),
+    zhandu:    c(f.sat * 0.8 + f.edges * 1.5),
+    sanjia:    c(f.edges * 5 * f.sat),
+  };
+}
+
+function ranked() {
+  return LABELS.map((l, i) => ({ ...l, v: values[i] })).sort((a, b) => b.v - a.v);
+}
+
+function analyse() {
+  const [w] = sourceSize();
+  if (!w || mode !== 'real') return;
+  const h = heuristics(sampleFeatures());
+  LABELS.forEach((l, i) => {
+    drift[i] = Math.max(0, Math.min(1, drift[i] + (Math.random() - 0.5) * 0.08));
+    const target = 0.55 * h[l.id] + 0.45 * drift[i];
+    values[i] += (target - values[i]) * 0.15;
+  });
+  render();
+}
+
+function render() {
+  const order = ranked();
+  const top3 = new Set(order.slice(0, 3).map(x => x.id));
+  LABELS.forEach((l, i) => {
+    const pct = Math.round(values[i] * 100);
+    const row = rows[l.id];
+    row.querySelector('.fill').style.width = pct + '%';
+    row.querySelector('.pct').textContent = pct;
+    row.classList.toggle('top', top3.has(l.id));
+  });
+  const top5 = order.slice(0, 5).reduce((s, x) => s + x.v, 0) / 5;
+  $('total').textContent = Math.round(top5 * 100);
+  $('summary').textContent = order.slice(0, 3).map(x => `${x.name} ${Math.round(x.v * 100)}`).join('・');
+}
+
+function startAnalysis() {
+  clearInterval(analysisTimer);
+  analysisTimer = setInterval(analyse, 150);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) clearInterval(analysisTimer);
+  else if (source) startAnalysis();
+});
+
+// ---------- 異托邦（示意：篩光，光像沙一樣從亮處漏下、堆積） ----------
+// 階段 1 會改成：凍結畫面＋濃度 → Worker → Gemini 生成。
+const sctx = surreal.getContext('2d');
+const frozen = document.createElement('canvas');
+const fctx = frozen.getContext('2d');
+let W = 0, H = 0, dpr = 1, raf = 0, grains = [], heap = [], colW = 6, sources = [], spawned = 0;
+
+function drawCover(ctx, src, sw, sh, w, h) {
+  const s = Math.max(w / sw, h / sh), dw = sw * s, dh = sh * s;
+  ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+}
+
+function findLightSources() {
+  const lw = 48, lh = Math.max(8, Math.round(48 * H / W));
+  const low = document.createElement('canvas');
+  low.width = lw; low.height = lh;
+  const lctx = low.getContext('2d');
+  lctx.drawImage(frozen, 0, 0, lw, lh);
+  const d = lctx.getImageData(0, 0, lw, lh).data, pts = [];
+  for (let y = 0; y < lh * 0.8; y++)
+    for (let x = 0; x < lw; x++) {
+      const i = (y * lw + x) * 4;
+      const l = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+      pts.push({ x: (x + 0.5) / lw * W, y: (y + 0.5) / lh * H, l });
+    }
+  pts.sort((a, b) => b.l - a.l);
+  const bright = pts.filter(p => p.l > 0.78);
+  return (bright.length > 12 ? bright : pts.slice(0, 40)).slice(0, 400);
+}
+
+function enterSurreal() {
+  const [sw, sh] = sourceSize();
+  if (!sw) return;
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = Math.round(innerWidth * dpr); H = Math.round(innerHeight * dpr);
+  surreal.width = frozen.width = W; surreal.height = frozen.height = H;
+  drawCover(fctx, source, sw, sh, W, H);
+  colW = Math.max(4, Math.round(3 * dpr));
+  heap = new Float32Array(Math.ceil(W / colW) + 1);
+  grains = []; spawned = 0;
+  sources = findLightSources();
+  surreal.classList.remove('on'); void surreal.offsetWidth; surreal.classList.add('on');
+  const top = ranked().slice(0, 3);
+  showCaption(
+    `<div class="q">Strongest now: ${top.map(x => `${x.name} ${Math.round(x.v * 100)}%`).join(' · ')}</div>` +
+    `<small>Preview effect — 篩光 Sifted Light: light leaks from the brightest areas like sand and piles up. Later phases will generate the image with AI from these readings.</small>`,
+    6000
+  );
+  cancelAnimationFrame(raf);
+  raf = requestAnimationFrame(tick);
+}
+
+function settle() {
+  const maxStep = colW * 1.2;
+  for (let pass = 0; pass < 2; pass++)
+    for (let i = 1; i < heap.length - 1; i++) {
+      for (const j of [i - 1, i + 1]) {
+        const diff = heap[i] - heap[j];
+        if (diff > maxStep) { const m = (diff - maxStep) / 2; heap[i] -= m; heap[j] += m; }
+      }
+    }
+}
+
+function tick() {
+  sctx.drawImage(frozen, 0, 0);
+  sctx.fillStyle = 'rgba(255,255,255,0.06)';
+  sctx.fillRect(0, 0, W, H);
+
+  const budget = W * 6;
+  if (spawned < budget && sources.length) {
+    for (let k = 0; k < 14; k++) {
+      const s = sources[(Math.random() * sources.length) | 0];
+      grains.push({
+        x: s.x + (Math.random() - 0.5) * 18 * dpr, y: s.y,
+        vx: (Math.random() - 0.5) * 0.3 * dpr, vy: Math.random() * dpr,
+        r: (0.8 + Math.random() * 1.4) * dpr,
+      });
+      spawned++;
+    }
+  }
+
+  // 光砂堆在面板上緣，才不會被面板擋住
+  const floor = H - panel.offsetHeight * dpr;
+  sctx.fillStyle = 'rgba(255,248,228,0.95)';
+  const g = 0.14 * dpr, keep = [];
+  for (const p of grains) {
+    p.vy += g; p.x += p.vx; p.y += p.vy;
+    const col = Math.max(0, Math.min(heap.length - 1, (p.x / colW) | 0));
+    if (p.y >= floor - heap[col]) { heap[col] += p.r * 1.1; continue; }
+    sctx.fillRect(p.x, p.y, p.r, p.r);
+    keep.push(p);
+  }
+  grains = keep;
+  settle();
+
+  const grad = sctx.createLinearGradient(0, floor - H * 0.3, 0, floor);
+  grad.addColorStop(0, 'rgba(255,252,240,0.92)');
+  grad.addColorStop(1, 'rgba(244,234,210,0.96)');
+  sctx.fillStyle = grad;
+  sctx.beginPath();
+  sctx.moveTo(0, H);
+  sctx.lineTo(0, floor - heap[0]);
+  for (let i = 0; i < heap.length; i++) sctx.lineTo(i * colW, floor - heap[i]);
+  sctx.lineTo(W, H);
+  sctx.closePath();
+  sctx.fill();
+
+  if (mode === 'surreal') raf = requestAnimationFrame(tick);
+}
+
+function setMode(m) {
+  mode = m;
+  $('modeReal').classList.toggle('on', m === 'real');
+  $('modeSurreal').classList.toggle('on', m === 'surreal');
+  if (m === 'surreal') enterSurreal();
+  else {
+    cancelAnimationFrame(raf);
+    surreal.classList.remove('on');
+    $('caption').classList.remove('on');
+  }
+}
+$('modeReal').addEventListener('click', () => setMode('real'));
+$('modeSurreal').addEventListener('click', () => setMode('surreal'));
+addEventListener('resize', () => { syncPanelHeight(); if (mode === 'surreal') setMode('real'); });
+</script>
+</body>
+</html>
