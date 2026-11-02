@@ -203,6 +203,8 @@ button:disabled { opacity: .45; cursor: default; }
   display: flex; align-items: center; background: rgba(20,20,22,.9); border-radius: 999px; padding: 2px 4px 2px 12px; }
 .savevideo button { color: #fff; font-size: 14px; padding: 9px 10px; }
 .savevideo #closeVideoBtn { opacity: .7; font-size: 19px; line-height: 1; }
+.savevideo #folderBtn { opacity: .75; font-size: 12px; }
+#folderBtn[hidden] { display: none; }
 .toast { position: fixed; left: 50%; bottom: calc(28px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 40;
   padding: 10px 16px; border-radius: 999px; background: rgba(20,20,22,.88); color: #fff; font-size: 13px; white-space: nowrap;
   animation: sheet-in .24s ease; }
@@ -262,6 +264,7 @@ button:disabled { opacity: .45; cursor: default; }
 
   <div id="saveVideo" class="savevideo" hidden>
     <button id="saveVideoBtn">Save video</button>
+    <button id="folderBtn" title="Choose the folder for saved videos" aria-label="Choose folder">Folder</button>
     <button id="closeVideoBtn" aria-label="Dismiss">×</button>
   </div>
 
@@ -464,12 +467,15 @@ function saveCfg(url, token) {
   if (!m) return;
   const ok = saveCfg(loadCfg().url, m[1]);
   try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
-  const toast = document.createElement('div');
-  toast.className = 'toast';
-  toast.textContent = ok ? 'Connection saved on this device.' : 'Could not save (storage is blocked in this browser).';
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 6000);
+  toast(ok ? 'Connection saved on this device.' : 'Could not save (storage is blocked in this browser).');
 })();
+function toast(msg, ms = 6000) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
 function openSettings(msg) {
   const cfg = loadCfg();
   $('cfgUrl').value = cfg.url;
@@ -781,13 +787,13 @@ const eyes = (() => {
 // 十二個標籤的文字描述已事先轉成向量，存在 clip_text.json（手機不用下載文字模型）。
 // 手機只下載看圖的那一半，把畫面轉成向量，和每個標籤「像」與「不像」的描述比較：
 // 越像描述，濃度越高；再乘上「這看起來像不像綠美圖那種建築」，所以餐廳、桌面、手都會偏低。
-// 校正值：用 120 張原始照片（其中像綠美圖的 97 張）算出每個標籤的平均 mu 與標準差 sd
-const CAL = {"chuantang":{"mu":1.553,"sd":1.305},"jietian":{"mu":1.657,"sd":1.257},"shawang":{"mu":2.296,"sd":1.3},"raoyou":{"mu":0.786,"sd":1.163},"zhanren":{"mu":1.387,"sd":1.389},"shaiguang":{"mu":1.987,"sd":1.296},"zizhan":{"mu":-0.645,"sd":1.789},"kuangwai":{"mu":0.708,"sd":1.378},"fangsheng":{"mu":-0.259,"sd":1.967},"liuren":{"mu":-1.628,"sd":0.959},"zhandu":{"mu":0.903,"sd":1.265},"sanjia":{"mu":-0.35,"sd":1.085}};
+// 校正值：用 333 張照片（原本的 120 張 + fb / ins / th 資料夾裡 213 張不重複的）算出每個標籤的平均 mu 與標準差 sd
+const CAL = {"chuantang":{"mu":0.83,"sd":1.502},"jietian":{"mu":1.137,"sd":1.458},"shawang":{"mu":2.014,"sd":1.612},"raoyou":{"mu":0.64,"sd":1.575},"zhanren":{"mu":0.957,"sd":1.554},"shaiguang":{"mu":2.123,"sd":1.475},"zizhan":{"mu":-0.068,"sd":2.088},"kuangwai":{"mu":0.329,"sd":1.321},"fangsheng":{"mu":-0.932,"sd":1.912},"liuren":{"mu":-1.443,"sd":1.187},"zhandu":{"mu":1.098,"sd":1.298},"sanjia":{"mu":-0.27,"sd":1.17}};
 const clip = (() => {
   const TF = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
   const MODEL = 'Xenova/clip-vit-base-patch32';
   const SCALE = 100;
-  const Z_LOW = 0.3, Z_HIGH = 2.5; // 用你的 120 張照片試算：平均每張約 1.5 個標籤超過 40，第一名平均約 62、第二 37、第三 24
+  const Z_LOW = 0.1, Z_HIGH = 2.2; // 用 333 張照片試算：平均每張約 2 個標籤超過 40，第一名平均約 64、第二 44、第三 30
   let T = null, proc = null, vis = null, text = null, loading = null, failed = false, ready = false;
   let pct = 0, running = false, timer = 0, doneFor = null, out = null, gate = 0;
   const cv = document.createElement('canvas'); cv.width = cv.height = 224;
@@ -1284,11 +1290,61 @@ const rec = (() => {
     if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
   }
 
+  // ---- 電腦版：記住一個資料夾（例如 D:\115claude\其他\video），之後「Save video」直接存進去 ----
+  // 網頁不能自己指定路徑，只能請你在第一次選一下資料夾；選過就記在這台電腦的瀏覽器裡。
+  // 只有電腦版的 Chrome / Edge 有這個功能；手機和 Safari / Firefox 照舊走分享選單或一般下載。
+  const folderOk = 'showDirectoryPicker' in window && !matchMedia('(pointer: coarse)').matches;
+  let dirHandle = null;
+  const prefs = (mode, value) => new Promise(resolve => {
+    try {
+      const open = indexedDB.open('surreallens_v6_prefs', 1);
+      open.onupgradeneeded = () => open.result.createObjectStore('kv');
+      open.onerror = () => resolve(null);
+      open.onsuccess = () => {
+        try {
+          const tx = open.result.transaction('kv', mode === 'put' ? 'readwrite' : 'readonly');
+          const store = tx.objectStore('kv');
+          const req = mode === 'put' ? store.put(value, 'videoDir') : store.get('videoDir');
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        } catch (e) { resolve(null); }
+      };
+    } catch (e) { resolve(null); }
+  });
+  async function chooseFolder() {
+    dirHandle = await window.showDirectoryPicker({ id: 'surreallens-video', mode: 'readwrite' });
+    await prefs('put', dirHandle); // 存不進去也沒關係，這次照樣能用
+    return dirHandle;
+  }
+  async function usableFolder(ask) {
+    if (!dirHandle) dirHandle = await prefs('get');
+    if (dirHandle) {
+      try {
+        let perm = await dirHandle.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') perm = await dirHandle.requestPermission({ mode: 'readwrite' });
+        if (perm === 'granted') return dirHandle;
+      } catch (e) { dirHandle = null; } // 資料夾被刪掉或搬走了
+    }
+    return ask ? chooseFolder() : null;
+  }
+  async function saveToFolder(blob, name) {
+    const dir = await usableFolder(true);
+    const fh = await dir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    await w.write(blob);
+    await w.close();
+    toast(`Saved to “${dir.name}”: ${name}`);
+  }
+
   async function save() {
     if (!savedBlob) return;
     const ext = savedBlob.type.includes('mp4') ? 'mp4' : 'webm';
     const name = `surreallens-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.${ext}`;
     const file = new File([savedBlob], name, { type: savedBlob.type });
+    if (folderOk) {
+      try { await saveToFolder(savedBlob, name); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; } // 沒選資料夾就取消；其他錯誤改走一般下載
+    }
     try {
       if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
     } catch (e) { if (e && e.name === 'AbortError') return; }
@@ -1300,6 +1356,10 @@ const rec = (() => {
     document.body.appendChild(a); a.click(); a.remove();
   }
 
+  if (!folderOk) $('folderBtn').hidden = true;
+  $('folderBtn').addEventListener('click', async () => {
+    try { const d = await chooseFolder(); toast(`Videos will be saved to “${d.name}”.`); } catch (e) {}
+  });
   btn.addEventListener('click', () => (active ? stop(true) : start()));
   $('saveVideoBtn').addEventListener('click', save);
   $('closeVideoBtn').addEventListener('click', hidePill);
