@@ -445,7 +445,7 @@ function saveCfg(url, token) {
   toast.className = 'toast';
   toast.textContent = ok ? 'Connection saved on this device.' : 'Could not save (storage is blocked in this browser).';
   document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 4200);
+  setTimeout(() => toast.remove(), 6000);
 })();
 function openSettings(msg) {
   const cfg = loadCfg();
@@ -742,7 +742,7 @@ const CAL = {"chuantang":{"mu":1.553,"sd":1.305},"jietian":{"mu":1.657,"sd":1.25
 const clip = (() => {
   const TF = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
   const MODEL = 'Xenova/clip-vit-base-patch32';
-  const SCALE = 100, G0 = 0.15, G1 = 0.6;
+  const SCALE = 100;
   let T = null, proc = null, vis = null, text = null, loading = null, failed = false, ready = false;
   let pct = 0, running = false, timer = 0, doneFor = null, out = null, gate = 0;
   const cv = document.createElement('canvas'); cv.width = cv.height = 224;
@@ -752,10 +752,40 @@ const clip = (() => {
   const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
   const norm = v => { const n = Math.hypot(...v); return v.map(x => x / n); };
 
+  // 大家拍的綠美圖照片（集體觀看）的向量，clip_refs.json：n 張、每張 dim 維，int16 量化後轉 base64。
+  // 拿來算「這一格有多像大家拍過的照片」，只用來調整數字的大小，不擋任何東西。檔案不見就當作沒有這項。
+  let refs = null;
+  async function loadRefs() {
+    try {
+      const j = await (await fetch('clip_refs.json')).json();
+      const bin = atob(j.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const q = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+      const f = new Float32Array(q.length);
+      for (let i = 0; i < q.length; i++) f[i] = q[i] / j.scale;
+      return { n: j.n, dim: j.dim, f, lo: j.lo, hi: j.hi, floor: j.floor, k: j.k || 5 };
+    } catch (e) { console.warn('clip_refs.json not available; similarity factor off', e); return null; }
+  }
+  // 與每張參考照片的相似度，取最像的 k 張的平均（越高 = 越像大家拍過的照片）
+  function typicality(emb, skip) {
+    if (!refs) return null;
+    const sims = [];
+    for (let r = 0; r < refs.n; r++) {
+      if (r === skip) continue;
+      let s = 0; const o = r * refs.dim;
+      for (let d = 0; d < refs.dim; d++) s += refs.f[o + d] * emb[d];
+      sims.push(s);
+    }
+    sims.sort((a, b) => b - a);
+    let t = 0; for (let i = 0; i < refs.k; i++) t += sims[i];
+    return t / refs.k;
+  }
+
   function load() {
     if (loading) return loading;
     loading = (async () => {
       text = await (await fetch('clip_text.json')).json();
+      refs = await loadRefs();
       T = await import(TF);
       T.env.allowLocalModels = false;
       proc = await T.AutoProcessor.from_pretrained(MODEL);
@@ -772,7 +802,7 @@ const clip = (() => {
 
   // 把一張圖（或影片畫面）轉成：每個標籤「像描述減去不像描述」的差，加上「像綠美圖那類建築」的機率
   async function measure(src) {
-    const sw = src.videoWidth || src.naturalWidth, sh = src.videoHeight || src.naturalHeight;
+    const sw = src.videoWidth || src.naturalWidth || src.width, sh = src.videoHeight || src.naturalHeight || src.height;
     const s = Math.max(224 / sw, 224 / sh);
     cctx.drawImage(src, (224 - sw * s) / 2, (224 - sh * s) / 2, sw * s, sh * s);
     const inputs = await proc(T.RawImage.fromCanvas(cv));
@@ -783,7 +813,7 @@ const clip = (() => {
     const mx = Math.max(...sims), ex = sims.map(x => Math.exp(x - mx)), tot = ex.reduce((a, b) => a + b, 0);
     const g = ex.slice(0, text.gate.pos.length).reduce((a, b) => a + b, 0) / tot;
     const diffs = LABELS.map(l => SCALE * (dot(img, text.labels[l.id].pos) - dot(img, text.labels[l.id].neg)));
-    return { g, diffs };
+    return { g, diffs, emb: img, typ: typicality(img) };
   }
 
   // 濃度 = 這張圖在這個標籤上，比「大家拍的 120 張綠美圖」平均高出多少（常態分佈的百分位），
@@ -791,7 +821,14 @@ const clip = (() => {
   const erf = x => { const t = 1 / (1 + .3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; };
   const cdf = z => .5 * (1 + erf(z / Math.SQRT2));
   function score(m) {
-    const factor = Math.max(0, Math.min(1, (m.g - G0) / (G1 - G0)));
+    // 把握度：這一格有多像「大家拍過的 120 張綠美圖照片」（最像的 5 張的平均相似度）。
+    // 只用來調整數字大小，不擋任何東西；拍牆角、椅子局部也像其中某幾張，所以不會被擋掉。
+    // 門檻（lo / hi / floor）寫在 clip_refs.json，是用「照片自己比對」與「非綠美圖照片」校出來的。
+    let factor = 1;
+    if (refs && m.typ != null) {
+      factor = refs.floor + (1 - refs.floor) * Math.max(0, Math.min(1, (m.typ - refs.lo) / (refs.hi - refs.lo)));
+    }
+    m.factor = factor;
     return LABELS.map((l, i) => {
       const c = CAL[l.id];
       const p = c ? cdf((m.diffs[i] - c.mu) / c.sd) : 1 / (1 + Math.exp(-m.diffs[i]));
@@ -837,6 +874,7 @@ const clip = (() => {
     progress: () => pct,
     gate: () => gate,
     measure,
+    typicality,
   };
 })();
 
@@ -955,8 +993,7 @@ function render(usedIds) {
     row.classList.toggle('top', top3.has(l.id));
     row.classList.toggle('used', used.has(l.id));
   });
-  $('labels').classList.toggle('none', top3.size === 0);
-}
+  $('labels').classList.toggle('none', top3.size === 0);}
 
 function startAnalysis() {
   clearInterval(analysisTimer);
