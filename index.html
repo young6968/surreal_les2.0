@@ -88,6 +88,9 @@ button:disabled { opacity: .45; cursor: default; }
 #surreal.on { display: block; }
 #result.on { display: block; animation: reveal 1.6s ease-out; }
 #result.on.instant { animation: none; }
+/* 結果圖可以直接存：手機長按圖、電腦按右鍵「另存圖片」。上面的偵測層和面板都不擋它（偵測層 pointer-events: none）。
+   存下來的是完整的原圖，不是畫面上被裁切的那一塊。 */
+#result { -webkit-touch-callout: default; -webkit-user-select: auto; user-select: auto; pointer-events: auto; }
 @keyframes fade-wait { from { filter: brightness(1) saturate(1); } to { filter: brightness(1.18) saturate(.55); } }
 @keyframes reveal { from { opacity: 0; filter: brightness(1.8) blur(6px); } to { opacity: 1; filter: none; } }
 .badge.waiting { animation: pulse 1.2s ease-in-out infinite; }
@@ -172,8 +175,6 @@ button:disabled { opacity: .45; cursor: default; }
 .panel.open .row .name { font-size: 11px; opacity: .8; }
 .panel.open .row.top .name, .panel.open .row.used .name { opacity: 1; }
 .panel.open .row .pct { font-size: 10px; }
-.panel.min .labels { display: none; }
-.panel.min .panel-head { margin-bottom: 0; }
 
 /* ---------- 設定 ---------- */
 /* 設定從頂部落下：欄位在畫面最上面，鍵盤從下面升起時不會把它們頂走或讓版面亂跳 */
@@ -194,6 +195,14 @@ button:disabled { opacity: .45; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .sheet { animation: none; } }
 #entry > #gearBtn { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 14px; z-index: 2; }
 .brand { cursor: pointer; }
+/* 錄影按鈕與「存影片」小條 */
+#recBtn { color: #d23b3b; }
+#recBtn.on { background: rgba(255,255,255,.96); animation: pulse 1.2s ease-in-out infinite; }
+#recBtn[hidden], .savevideo[hidden] { display: none; }
+.savevideo { position: absolute; left: 50%; top: calc(64px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 6;
+  display: flex; align-items: center; background: rgba(20,20,22,.9); border-radius: 999px; padding: 2px 4px 2px 12px; }
+.savevideo button { color: #fff; font-size: 14px; padding: 9px 10px; }
+.savevideo #closeVideoBtn { opacity: .7; font-size: 19px; line-height: 1; }
 .toast { position: fixed; left: 50%; bottom: calc(28px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 40;
   padding: 10px 16px; border-radius: 999px; background: rgba(20,20,22,.88); color: #fff; font-size: 13px; white-space: nowrap;
   animation: sheet-in .24s ease; }
@@ -246,9 +255,15 @@ button:disabled { opacity: .45; cursor: default; }
     <div id="brand" class="brand" role="button" aria-label="Back to the first page" title="Back to the first page">‹ SurrealLens</div>
     <div class="right">
       <div id="badge" class="badge">Simulated</div>
+      <button id="recBtn" class="gear" aria-label="Record a video" title="Record a video">●</button>
       <button id="eyesBtn" class="gear on" aria-label="Show detected beings and objects" title="Detection on/off">◎</button>
     </div>
   </header>
+
+  <div id="saveVideo" class="savevideo" hidden>
+    <button id="saveVideoBtn">Save video</button>
+    <button id="closeVideoBtn" aria-label="Dismiss">×</button>
+  </div>
 
   <div id="caption" class="caption"></div>
 
@@ -511,19 +526,18 @@ for (const l of LABELS) {
 function syncPanelHeight() {
   document.documentElement.style.setProperty('--panel-h', panel.offsetHeight + 'px');
 }
-// 面板三種狀態：min（只剩按鈕）→ default（三個標籤）→ open（十二個小條）
+// 面板兩種狀態：default（三個標籤）⇄ open（十二個小條）。沒有「只剩按鈕」這一種。
 let panelState = 'default';
-const PANEL_STATES = ['min', 'default', 'open'];
+const PANEL_STATES = ['default', 'open'];
 function setPanelState(s) {
   panelState = s;
-  panel.classList.toggle('min', s === 'min');
   panel.classList.toggle('open', s === 'open');
   render(usedNow);
   syncPanelHeight();
 }
-// 點把手：三個 ⇄ 十二個（從 min 點一下回到三個）
+// 點把手：三個 ⇄ 十二個
 $('handle').addEventListener('click', () => setPanelState(panelState === 'default' ? 'open' : 'default'));
-// 在面板上往上滑 = 多一級，往下滑 = 少一級
+// 在面板上往上滑 = 十二個，往下滑 = 三個
 let swipeY = null;
 panel.addEventListener('touchstart', e => { swipeY = e.touches[0].clientY; }, { passive: true });
 panel.addEventListener('touchend', e => {
@@ -1189,6 +1203,110 @@ const wait = (() => {
   return { start, cancel, settle, reveal };
 })();
 
+// ---------- 錄影 ----------
+// 點 ● 開始錄：先錄即時鏡頭，按下 Heterotopia 後接著錄凍結的照片、方塊錯位、新圖掃出來，
+// 結果圖出現後再停 2 秒自動結束。錄的是一張畫布（不是螢幕），所以不會有面板、標籤名字和偵測框。
+// 沒有聲音（你說過不收麥克風）。瀏覽器不支援時，整顆按鈕不會出現。
+const rec = (() => {
+  const btn = $('recBtn'), pill = $('saveVideo');
+  const supported = typeof MediaRecorder !== 'undefined' && !!HTMLCanvasElement.prototype.captureStream;
+  const none = { start() {}, stop() {}, discard() {}, afterResult() {}, active: () => false };
+  if (!supported) { btn.hidden = true; return none; }
+
+  const FPS = 24, WIDTH = 540, HOLD_MS = 2000;
+  let cv = null, cctx = null, mr = null, chunks = [], raf = 0, last = 0, active = false, keep = true, holdTimer = 0;
+  let mime = '', blobUrl = null, savedBlob = null;
+
+  const pickMime = () => ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+    .find(m => MediaRecorder.isTypeSupported(m)) || '';
+
+  // 錄影用的畫面：結果圖出現後用結果圖；等待和轉場時用 surreal 畫布；平常用即時鏡頭（或上傳的照片）
+  function frame(t) {
+    if (!active) return;
+    raf = requestAnimationFrame(frame);
+    if (t - last < 1000 / FPS) return;
+    last = t;
+    const W = cv.width, H = cv.height;
+    cctx.fillStyle = '#fff'; cctx.fillRect(0, 0, W, H);
+    if (result.classList.contains('on') && result.naturalWidth) drawCover(cctx, result, result.naturalWidth, result.naturalHeight, W, H);
+    else if (surreal.classList.contains('on')) drawCover(cctx, surreal, surreal.width, surreal.height, W, H);
+    else if (source) { const [sw, sh] = sourceSize(); if (sw) drawCover(cctx, source, sw, sh, W, H); }
+  }
+
+  function start() {
+    if (active || !source) return;
+    hidePill();
+    cv = document.createElement('canvas');
+    cv.width = WIDTH; cv.height = Math.round(WIDTH * innerHeight / innerWidth / 2) * 2;
+    cctx = cv.getContext('2d');
+    mime = pickMime();
+    try {
+      mr = new MediaRecorder(cv.captureStream(FPS), mime ? { mimeType: mime, videoBitsPerSecond: 2500000 } : undefined);
+    } catch (e) { showCaption('<div class="q err">This browser can’t record video.</div>', 4000); return; }
+    chunks = []; keep = true;
+    mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = onStopped;
+    active = true; last = 0;
+    frame(performance.now());
+    mr.start(500);
+    btn.classList.add('on');
+  }
+
+  function stop(save = true) {
+    clearTimeout(holdTimer);
+    if (!active) return;
+    keep = save;
+    active = false;
+    cancelAnimationFrame(raf);
+    btn.classList.remove('on');
+    try { mr.stop(); } catch (e) { onStopped(); }
+  }
+
+  function onStopped() {
+    const type = (mime || 'video/webm').split(';')[0];
+    const blob = new Blob(chunks, { type });
+    chunks = []; mr = null;
+    if (!keep || blob.size < 4000) return;
+    savedBlob = blob;
+    pill.hidden = false;
+  }
+
+  // 結果出現（或失敗、沒有東西可畫）之後多錄一下再停
+  function afterResult(ms) {
+    if (!active) return;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => stop(true), ms == null ? HOLD_MS : ms);
+  }
+
+  function hidePill() {
+    pill.hidden = true;
+    savedBlob = null;
+    if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+  }
+
+  async function save() {
+    if (!savedBlob) return;
+    const ext = savedBlob.type.includes('mp4') ? 'mp4' : 'webm';
+    const name = `surreallens-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.${ext}`;
+    const file = new File([savedBlob], name, { type: savedBlob.type });
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    // 不能用分享選單時：直接下載
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+    blobUrl = URL.createObjectURL(savedBlob);
+    const a = document.createElement('a');
+    a.href = blobUrl; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  btn.addEventListener('click', () => (active ? stop(true) : start()));
+  $('saveVideoBtn').addEventListener('click', save);
+  $('closeVideoBtn').addEventListener('click', hidePill);
+
+  return { start, stop, afterResult, discard() { stop(false); hidePill(); }, active: () => active, blob: () => savedBlob };
+})();
+
 // ---------- Worker 呼叫 ----------
 // 每次按下 Heterotopia 只呼叫一次，畫一張圖。
 // 不自動重試：逾時代表「不知道 fal 有沒有處理」，不是「失敗」。
@@ -1422,6 +1540,7 @@ function setButtons() {
 }
 
 function setReality() {
+  rec.stop(true); // 錄影中回到即時鏡頭 = 結束錄影
   mode = 'real';
   unfreeze();
   result.classList.remove('on');
@@ -1464,6 +1583,7 @@ async function goHeterotopia() {
       unfreeze();
       mode = 'result';
       showCaption(`<div class="q">Nothing here to transform.</div><small>Nothing stands out enough to draw, so nothing was sent.</small>`, 5000);
+      rec.afterResult(800);
       return;
     }
     const { dataUrl } = await transformFrame(frame, ops);
@@ -1473,6 +1593,7 @@ async function goHeterotopia() {
       if (!(await wait.reveal(result))) return; // 中途切回 Reality 就不再顯示
       result.classList.remove('on'); void result.offsetWidth; result.classList.add('on', 'instant');
       unfreeze();
+      rec.afterResult(); // 錄影中：結果圖出現後再錄 2 秒就結束
     };
     result.src = dataUrl;
     mode = 'result';
@@ -1481,6 +1602,7 @@ async function goHeterotopia() {
     unfreeze();
     mode = 'real';
     showCaption(`<div class="q err">Couldn’t open the heterotopia.</div><small>${escapeHtml(e.message)}</small>`, 8000);
+    rec.afterResult(800);
   } finally {
     busy = false;
     setButtons();
@@ -1490,6 +1612,7 @@ async function goHeterotopia() {
 // 回第一頁：關相機、停掉鏡頭頁的運算（設定、上傳都在第一頁）
 function goHome() {
   if (busy) return;
+  rec.discard();
   clearInterval(analysisTimer);
   stopCamera();
   wait.cancel();
