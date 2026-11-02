@@ -242,7 +242,7 @@ button:disabled { opacity: .45; cursor: default; }
 <section id="settings">
   <div class="sheet">
     <h2>Connection</h2>
-    <p>Heterotopia uses your SurrealLens Worker. Each tap sends that one frame to the AI to read and transform it (1 Worker call). The live bars are simulated on your device. Settings stay on this device.</p>
+    <p>Heterotopia uses your SurrealLens Worker. Each tap sends that one frame to the AI to read and transform it (1 Worker call). The live bars are read on your device by a small AI model; nothing is uploaded. Settings stay on this device.</p>
     <label>Worker URL
       <input id="cfgUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://surreallens-gemini-proxy.xxx.workers.dev">
     </label>
@@ -527,6 +527,7 @@ const eyes = (() => {
   const SEG_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/latest/deeplab_v3.tflite';
   const DET_MODEL = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/latest/efficientdet_lite0.tflite';
   const LIVING = new Set(['person', 'bird', 'cat', 'dog', 'sheep', 'cow', 'horse']); // 偵測器的 COCO 名稱
+  const LIVING_IDS = new Set([3, 8, 10, 12, 13, 15, 17]); // 切割模型的類別編號：bird cat cow dog horse person sheep
   const glow = $('glow'), boxes = $('boxes'), btn = $('eyesBtn');
   const gctx = glow.getContext('2d'), bctx = boxes.getContext('2d');
   let enabled = true;
@@ -583,7 +584,8 @@ const eyes = (() => {
 
   // 先由偵測器找出生物的框，再把每個框裁出來單獨切輪廓：
   // 整張圖一次切，遠處或偏暗的人常被漏掉；裁小圖之後就切得到。
-  // 偵測器已經說了那是生物，所以裁圖裡「不是背景」的像素都算它的輪廓。
+  // 裁圖裡只有被分成「生物」類別的像素才發亮；桌子、椅子、杯子這些背景物件不算。
+  // （小圖裡人偶爾會被誤分成貓或狗，所以七種生物類別都接受。）
   const crop = document.createElement('canvas'), cropCtx = crop.getContext('2d', { willReadFrequently: true });
   const mask = document.createElement('canvas'), maskCtx = mask.getContext('2d');
   let clock = 0;
@@ -610,7 +612,7 @@ const eyes = (() => {
         const out = maskCtx.createImageData(cm.width, cm.height), px = out.data;
         for (let i = 0, j = 0; i < data.length; i++, j += 4) {
           px[j] = px[j + 1] = px[j + 2] = 255;
-          px[j + 3] = data[i] ? 255 : 0;
+          px[j + 3] = LIVING_IDS.has(data[i]) ? 255 : 0;
         }
         maskCtx.putImageData(out, 0, 0);
         gctx.drawImage(mask, x * gs, y * gs, w * gs, h * gs);
@@ -653,8 +655,108 @@ const eyes = (() => {
   };
 })();
 
+// ---------- 即時判讀（CLIP：手機上的小型看圖 AI，不呼叫 API） ----------
+// 十二個標籤的文字描述已事先轉成向量，存在 clip_text.json（手機不用下載文字模型）。
+// 手機只下載看圖的那一半，把畫面轉成向量，和每個標籤「像」與「不像」的描述比較：
+// 越像描述，濃度越高；再乘上「這看起來像不像綠美圖那種建築」，所以餐廳、桌面、手都會偏低。
+// 校正值：用 120 張原始照片（其中像綠美圖的 97 張）算出每個標籤的平均 mu 與標準差 sd
+const CAL = {"chuantang":{"mu":1.553,"sd":1.305},"jietian":{"mu":1.657,"sd":1.257},"shawang":{"mu":2.296,"sd":1.3},"raoyou":{"mu":0.786,"sd":1.163},"zhanren":{"mu":1.387,"sd":1.389},"shaiguang":{"mu":1.987,"sd":1.296},"zizhan":{"mu":-0.645,"sd":1.789},"kuangwai":{"mu":0.708,"sd":1.378},"fangsheng":{"mu":-0.259,"sd":1.967},"liuren":{"mu":-1.628,"sd":0.959},"zhandu":{"mu":0.903,"sd":1.265},"sanjia":{"mu":-0.35,"sd":1.085}};
+const clip = (() => {
+  const TF = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
+  const MODEL = 'Xenova/clip-vit-base-patch32';
+  const SCALE = 100, G0 = 0.15, G1 = 0.6;
+  let T = null, proc = null, vis = null, text = null, loading = null, failed = false, ready = false;
+  let pct = 0, running = false, timer = 0, doneFor = null, out = null, gate = 0;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 224;
+  const cctx = cv.getContext('2d', { willReadFrequently: true });
+
+  const setBadge = () => { if (mode === 'real') $('badge').textContent = idleBadge(); };
+  const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+  const norm = v => { const n = Math.hypot(...v); return v.map(x => x / n); };
+
+  function load() {
+    if (loading) return loading;
+    loading = (async () => {
+      text = await (await fetch('clip_text.json')).json();
+      T = await import(TF);
+      T.env.allowLocalModels = false;
+      proc = await T.AutoProcessor.from_pretrained(MODEL);
+      vis = await T.CLIPVisionModelWithProjection.from_pretrained(MODEL, {
+        dtype: 'q8',
+        progress_callback: p => {
+          if (p.status === 'progress' && p.total) { pct = Math.round(p.loaded / p.total * 100); setBadge(); }
+        },
+      });
+      ready = true;
+    })().catch(e => { failed = true; console.warn('clip failed', e); }).finally(setBadge);
+    return loading;
+  }
+
+  // 把一張圖（或影片畫面）轉成：每個標籤「像描述減去不像描述」的差，加上「像綠美圖那類建築」的機率
+  async function measure(src) {
+    const sw = src.videoWidth || src.naturalWidth, sh = src.videoHeight || src.naturalHeight;
+    const s = Math.max(224 / sw, 224 / sh);
+    cctx.drawImage(src, (224 - sw * s) / 2, (224 - sh * s) / 2, sw * s, sh * s);
+    const inputs = await proc(T.RawImage.fromCanvas(cv));
+    const { image_embeds } = await vis(inputs);
+    const img = norm(Array.from(image_embeds.data));
+
+    const sims = [...text.gate.pos, ...text.gate.neg].map(v => SCALE * dot(img, v));
+    const mx = Math.max(...sims), ex = sims.map(x => Math.exp(x - mx)), tot = ex.reduce((a, b) => a + b, 0);
+    const g = ex.slice(0, text.gate.pos.length).reduce((a, b) => a + b, 0) / tot;
+    const diffs = LABELS.map(l => SCALE * (dot(img, text.labels[l.id].pos) - dot(img, text.labels[l.id].neg)));
+    return { g, diffs };
+  }
+
+  // 濃度 = 這張圖在這個標籤上，比「大家拍的 120 張綠美圖」平均高出多少（常態分佈的百分位），
+  // 平均水準算 0，比九成的照片都更明顯才接近 100。再乘上「像不像綠美圖」。
+  const erf = x => { const t = 1 / (1 + .3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; };
+  const cdf = z => .5 * (1 + erf(z / Math.SQRT2));
+  function score(m) {
+    const factor = Math.max(0, Math.min(1, (m.g - G0) / (G1 - G0)));
+    return LABELS.map((l, i) => {
+      const c = CAL[l.id];
+      const p = c ? cdf((m.diffs[i] - c.mu) / c.sd) : 1 / (1 + Math.exp(-m.diffs[i]));
+      return Math.max(0, Math.min(1, (p - .4) / .6)) * factor;
+    });
+  }
+
+  async function run() {
+    const m = await measure(source);
+    gate = m.g;
+    out = score(m);
+  }
+
+  function tick() {
+    if (!ready || running || busy || mode !== 'real' || !source || !$('lens').classList.contains('on')) return;
+    const key = source === still ? still.src : null;
+    if (key && doneFor === key) return; // 上傳的照片只需算一次
+    running = true;
+    run().then(() => { if (key) doneFor = key; })
+      .catch(e => { failed = true; out = null; console.warn('clip stopped', e); setBadge(); })
+      .finally(() => { running = false; });
+  }
+
+  return {
+    start() { load(); if (!timer) timer = setInterval(tick, 900); },
+    targets: () => (ready && !failed ? out : null),
+    state: () => (failed ? 'failed' : ready ? 'ready' : 'loading'),
+    progress: () => pct,
+    gate: () => gate,
+    measure,
+  };
+})();
+
+function idleBadge() {
+  const s = clip.state();
+  if (s === 'ready') return 'Live AI';
+  if (s === 'failed') return 'Simulated';
+  return clip.progress() ? `Loading AI ${clip.progress()}%` : 'Loading AI…';
+}
+
 function enterLens() {
   eyes.start();
+  clip.start();
   show('lens');
   setReality();
   syncPanelHeight();
@@ -667,14 +769,13 @@ $('demoBtn').addEventListener('click', () => $('photoInput').click());
 $('errorDemoBtn').addEventListener('click', () => $('photoInput').click());
 $('photoInput').addEventListener('change', e => { startUpload(e.target.files[0]); e.target.value = ''; });
 
-// ---------- 即時濃度（模擬） ----------
-// 手機上還沒有真正的模型：用畫面的亮度、對比、邊緣等粗略特徵，混合緩慢變化的隨機值，
-// 讓濃度條隨鏡頭移動而跳動。按下 Heterotopia 後，才換成 Gemini 依定規判讀的真實數字。
+// ---------- 即時濃度 ----------
+// 由上面的 CLIP 判讀；只有 CLIP 失敗時才用亮度、對比、邊緣等粗略特徵當備用。
+// 按下 Heterotopia 後，才換成 Gemini 依判讀依據打出的分數。
 const probe = document.createElement('canvas');
 probe.width = 32; probe.height = 24;
 const pctx = probe.getContext('2d', { willReadFrequently: true });
-const values = LABELS.map(() => 0.3);
-const drift = LABELS.map(() => Math.random());
+const values = LABELS.map(() => 0);
 
 function sampleFeatures() {
   pctx.drawImage(source, 0, 0, 32, 24);
@@ -724,11 +825,14 @@ function ranked() {
 function analyse() {
   const [w] = sourceSize();
   if (!w || mode !== 'real') return;
-  const h = heuristics(sampleFeatures());
+  // 優先用 CLIP 的判讀；模型還在下載時濃度先停在 0（不顯示假數字）；
+  // 模型失敗時才退回粗略的畫面特徵（沒有隨機飄動，靜止時數字不會跳）。
+  const t = clip.targets();
+  let h = null;
+  if (!t && clip.state() === 'failed') h = heuristics(sampleFeatures());
   LABELS.forEach((l, i) => {
-    drift[i] = Math.max(0, Math.min(1, drift[i] + (Math.random() - 0.5) * 0.08));
-    const target = 0.55 * h[l.id] + 0.45 * drift[i];
-    values[i] += (target - values[i]) * 0.15;
+    const target = t ? t[i] : h ? h[l.id] : 0;
+    values[i] += (target - values[i]) * 0.2;
   });
   render();
 }
@@ -1058,7 +1162,7 @@ function setReality() {
   unfreeze();
   result.classList.remove('on');
   $('caption').classList.remove('on');
-  $('badge').textContent = 'Simulated';
+  $('badge').textContent = idleBadge();
   $('badge').classList.remove('live');
   setButtons();
 }
