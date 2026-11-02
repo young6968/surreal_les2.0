@@ -79,12 +79,22 @@ button:disabled { opacity: .45; cursor: default; }
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
 }
 #still, #surreal, #result { display: none; }
-#surreal.on { display: block; animation: fade-wait 2.4s ease-in-out infinite alternate; }
+#surreal.on { display: block; }
 #result.on { display: block; animation: reveal 1.6s ease-out; }
+#result.on.instant { animation: none; }
 @keyframes fade-wait { from { filter: brightness(1) saturate(1); } to { filter: brightness(1.18) saturate(.55); } }
 @keyframes reveal { from { opacity: 0; filter: brightness(1.8) blur(6px); } to { opacity: 1; filter: none; } }
 .badge.waiting { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .45; } }
+
+/* 偵測層：生物發亮、物體只有淡框；只在 Reality 模式顯示 */
+#glow, #boxes { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; display: none; }
+#glow { object-fit: cover; opacity: .9; transition: opacity .3s;
+  filter: drop-shadow(0 0 5px #fff) drop-shadow(0 0 16px rgba(255,255,255,.85)); }
+#glow.on, #boxes.on { display: block; }
+#eyesBtn { opacity: .55; }
+#eyesBtn.on { opacity: 1; }
+#eyesBtn.loading { animation: pulse 1.2s ease-in-out infinite; }
 
 .topbar {
   position: absolute; left: 0; right: 0; top: 0;
@@ -179,12 +189,12 @@ button:disabled { opacity: .45; cursor: default; }
 <!-- 入口 -->
 <section id="entry" class="screen on">
   <canvas id="ribbons"></canvas>
-  <div class="mark">GREEN MUSEUMBRARY<br>HETEROTOPIA LENS</div>
-  <h1 class="title">SurrealLens<br>sees it <em>otherwise.</em></h1>
-  <p class="subtitle">Point the lens at the Green Museumbrary<br>and see what makes it unlike any other library.</p>
-  <button id="startBtn" class="primary">Open Lens <span class="go" aria-hidden="true">→</span></button>
-  <button id="demoBtn" class="link">No camera? Try a sample photo</button>
-  <p class="note">Live readings are simulated on your device.<br>Tapping Heterotopia sends that one frame to the AI to read and transform it.</p>
+  <div class="mark">TAICHUNG GREEN MUSEUMBRARY</div>
+  <h1 class="title">Somewhere in here,<br><em>it is elsewhere.</em></h1>
+  <p class="subtitle">Lift the lens to find where.</p>
+  <button id="startBtn" class="primary">Look in <span class="go" aria-hidden="true">→</span></button>
+  <button id="demoBtn" class="link">Or upload your own photo</button>
+  <input id="photoInput" type="file" accept="image/*" hidden>
 </section>
 
 <!-- 錯誤 -->
@@ -192,7 +202,7 @@ button:disabled { opacity: .45; cursor: default; }
   <div class="mark">CAN'T OPEN THE CAMERA</div>
   <p id="errorMsg" class="subtitle"></p>
   <button id="retryBtn" class="primary">Try again</button>
-  <button id="errorDemoBtn" class="link">Use the sample photo</button>
+  <button id="errorDemoBtn" class="link">Upload a photo instead</button>
 </section>
 
 <!-- 鏡頭 -->
@@ -201,11 +211,14 @@ button:disabled { opacity: .45; cursor: default; }
   <img id="still" alt="">
   <canvas id="surreal"></canvas>
   <img id="result" alt="Heterotopia version of this view">
+  <canvas id="glow"></canvas>
+  <canvas id="boxes"></canvas>
 
   <header class="topbar">
     <div class="brand">SurrealLens</div>
     <div class="right">
       <div id="badge" class="badge">Simulated</div>
+      <button id="eyesBtn" class="gear on" aria-label="Show detected beings and objects" title="Detection on/off">◎</button>
       <button id="gearBtn" class="gear" aria-label="Settings">⚙</button>
     </div>
   </header>
@@ -229,7 +242,7 @@ button:disabled { opacity: .45; cursor: default; }
 <section id="settings">
   <div class="sheet">
     <h2>Connection</h2>
-    <p>Heterotopia uses your SurrealLens Worker. Each tap uses 1 Worker call. Settings stay on this device.</p>
+    <p>Heterotopia uses your SurrealLens Worker. Each tap sends that one frame to the AI to read and transform it (1 Worker call). The live bars are simulated on your device. Settings stay on this device.</p>
     <label>Worker URL
       <input id="cfgUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://surreallens-gemini-proxy.xxx.workers.dev">
     </label>
@@ -459,7 +472,7 @@ function showCaption(html, ms) {
 // ---------- 來源：相機或示範照片 ----------
 async function startCamera() {
   if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    return showError('The camera only works on an HTTPS or localhost address. Open the right address, or try the sample photo.');
+    return showError('The camera only works on an HTTPS or localhost address. Open the right address, or upload a photo.');
   }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -479,15 +492,21 @@ async function startCamera() {
   enterLens();
 }
 
-function startDemo() {
+// 用自己的照片：從相簿選一張，之後和相機畫面走同一條流程
+function startUpload(file) {
+  if (!file) return;
   stopCamera();
+  if (still.dataset.blob) URL.revokeObjectURL(still.dataset.blob);
+  const url = URL.createObjectURL(file);
+  still.dataset.blob = url;
   still.onload = () => {
     video.style.display = 'none';
     still.style.display = 'block';
     source = still;
     enterLens();
   };
-  still.src = 'samples/demo.jpg';
+  still.onerror = () => showError('That file could not be opened as a photo. Try a JPG or PNG.');
+  still.src = url;
 }
 
 function stopCamera() {
@@ -500,7 +519,142 @@ function sourceSize() {
     : [still.naturalWidth, still.naturalHeight];
 }
 
+// ---------- 偵測層（MediaPipe，模型在手機上跑，不呼叫 API 也不花錢） ----------
+// 生物（人、鳥、貓、狗、羊、牛、馬）：輪廓發亮 + 很淡的框 + 一個小字。
+// 其他物體：只有很淡的框 + 一個小字，不發亮。
+const eyes = (() => {
+  const BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+  const SEG_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/latest/deeplab_v3.tflite';
+  const DET_MODEL = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/latest/efficientdet_lite0.tflite';
+  const LIVING = new Set(['person', 'bird', 'cat', 'dog', 'sheep', 'cow', 'horse']); // 偵測器的 COCO 名稱
+  const glow = $('glow'), boxes = $('boxes'), btn = $('eyesBtn');
+  const gctx = glow.getContext('2d'), bctx = boxes.getContext('2d');
+  let enabled = true;
+  try { enabled = localStorage.getItem('surreallens_v6_eyes') !== '0'; } catch (e) {}
+  let seg = null, det = null, loading = null, failed = false, timer = 0, dets = [], doneFor = null;
+
+  btn.classList.toggle('on', enabled);
+
+  function load() {
+    if (loading) return loading;
+    btn.classList.add('loading');
+    loading = (async () => {
+      const vision = await import(`${BASE}/vision_bundle.mjs`);
+      const fileset = await vision.FilesetResolver.forVisionTasks(`${BASE}/wasm`);
+      const make = async (Cls, path, extra) => {
+        for (const delegate of ['GPU', 'CPU']) {
+          try {
+            return await Cls.createFromOptions(fileset, { baseOptions: { modelAssetPath: path, delegate }, runningMode: 'VIDEO', ...extra });
+          } catch (e) { if (delegate === 'CPU') throw e; }
+        }
+      };
+      seg = await make(vision.ImageSegmenter, SEG_MODEL, { outputCategoryMask: true, outputConfidenceMasks: false });
+      det = await make(vision.ObjectDetector, DET_MODEL, { scoreThreshold: 0.45, maxResults: 12 });
+    })().catch(e => { failed = true; console.warn('detector failed', e); }).finally(() => btn.classList.remove('loading'));
+    return loading;
+  }
+
+  const active = () => enabled && !failed && mode === 'real' && source && $('lens').classList.contains('on');
+  function layers(on) { glow.classList.toggle('on', on); boxes.classList.toggle('on', on); }
+
+  function drawBoxes() {
+    const lens = $('lens'), cw = lens.clientWidth, ch = lens.clientHeight, dpr = Math.min(devicePixelRatio || 1, 2);
+    if (boxes.width !== Math.round(cw * dpr) || boxes.height !== Math.round(ch * dpr)) {
+      boxes.width = Math.round(cw * dpr); boxes.height = Math.round(ch * dpr);
+    }
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bctx.clearRect(0, 0, cw, ch);
+    const [sw, sh] = sourceSize();
+    if (!sw) return;
+    const s = Math.max(cw / sw, ch / sh), ox = (cw - sw * s) / 2, oy = (ch - sh * s) / 2;
+    bctx.lineWidth = 1;
+    bctx.font = '10px -apple-system, "Noto Sans TC", sans-serif';
+    bctx.textBaseline = 'alphabetic';
+    for (const d of dets) {
+      const x = ox + d.box.originX * s, y = oy + d.box.originY * s, w = d.box.width * s, h = d.box.height * s;
+      bctx.strokeStyle = 'rgba(255,255,255,.34)';
+      bctx.strokeRect(x, y, w, h);
+      bctx.fillStyle = 'rgba(255,255,255,.8)';
+      bctx.shadowColor = 'rgba(0,0,0,.45)'; bctx.shadowBlur = 2;
+      bctx.fillText(d.name, x + 3, y > 13 ? y - 4 : y + 12);
+      bctx.shadowBlur = 0;
+    }
+  }
+
+  // 先由偵測器找出生物的框，再把每個框裁出來單獨切輪廓：
+  // 整張圖一次切，遠處或偏暗的人常被漏掉；裁小圖之後就切得到。
+  // 偵測器已經說了那是生物，所以裁圖裡「不是背景」的像素都算它的輪廓。
+  const crop = document.createElement('canvas'), cropCtx = crop.getContext('2d', { willReadFrequently: true });
+  const mask = document.createElement('canvas'), maskCtx = mask.getContext('2d');
+  let clock = 0;
+  const stamp = () => (clock = Math.max(clock + 1, Math.round(performance.now())));
+
+  function paintGlow(living, sw, sh) {
+    const gs = Math.min(1, 640 / Math.max(sw, sh));
+    const gw = Math.round(sw * gs), gh = Math.round(sh * gs);
+    if (glow.width !== gw || glow.height !== gh) { glow.width = gw; glow.height = gh; }
+    gctx.clearRect(0, 0, gw, gh);
+    for (const d of living.slice(0, 4)) {
+      const b = d.box, m = 0.1;
+      const x = Math.max(0, b.originX - b.width * m), y = Math.max(0, b.originY - b.height * m);
+      const w = Math.min(sw - x, b.width * (1 + 2 * m)), h = Math.min(sh - y, b.height * (1 + 2 * m));
+      if (w < 8 || h < 8) continue;
+      const cs = Math.min(1, 320 / Math.max(w, h));
+      crop.width = Math.max(1, Math.round(w * cs)); crop.height = Math.max(1, Math.round(h * cs));
+      cropCtx.drawImage(source, x, y, w, h, 0, 0, crop.width, crop.height);
+      seg.segmentForVideo(crop, stamp(), r => {
+        const cm = r.categoryMask;
+        if (!cm) return;
+        const data = cm.getAsUint8Array();
+        mask.width = cm.width; mask.height = cm.height;
+        const out = maskCtx.createImageData(cm.width, cm.height), px = out.data;
+        for (let i = 0, j = 0; i < data.length; i++, j += 4) {
+          px[j] = px[j + 1] = px[j + 2] = 255;
+          px[j + 3] = data[i] ? 255 : 0;
+        }
+        maskCtx.putImageData(out, 0, 0);
+        gctx.drawImage(mask, x * gs, y * gs, w * gs, h * gs);
+      });
+    }
+  }
+
+  function tick() {
+    if (!active()) return layers(false);
+    if (!seg || !det) return;
+    const [sw, sh] = sourceSize();
+    if (!sw) return;
+    const key = source === still ? still.src : null;
+    layers(true);
+    if (key && doneFor === key) return; // 上傳的照片只需算一次
+    try {
+      dets = det.detectForVideo(source, stamp()).detections
+        .map(d => ({ box: d.boundingBox, name: d.categories[0].categoryName }));
+      drawBoxes();
+      paintGlow(dets.filter(d => LIVING.has(d.name)), sw, sh);
+      if (key) doneFor = key;
+    } catch (e) { failed = true; layers(false); console.warn('detector stopped', e); }
+  }
+
+  btn.addEventListener('click', () => {
+    enabled = !enabled;
+    btn.classList.toggle('on', enabled);
+    try { localStorage.setItem('surreallens_v6_eyes', enabled ? '1' : '0'); } catch (e) {}
+    if (enabled) load(); else layers(false);
+  });
+  addEventListener('resize', () => { if (active()) drawBoxes(); });
+
+  return {
+    // 目前偵測到的生物輪廓（白色、有透明度），等待動畫用它讓人保持完整
+    silhouette: () => (enabled && !failed && glow.width && glow.height ? glow : null),
+    start() {
+      if (enabled) load();
+      if (!timer) timer = setInterval(tick, 250);
+    },
+  };
+})();
+
 function enterLens() {
+  eyes.start();
   show('lens');
   setReality();
   syncPanelHeight();
@@ -509,8 +663,9 @@ function enterLens() {
 
 $('startBtn').addEventListener('click', startCamera);
 $('retryBtn').addEventListener('click', startCamera);
-$('demoBtn').addEventListener('click', startDemo);
-$('errorDemoBtn').addEventListener('click', startDemo);
+$('demoBtn').addEventListener('click', () => $('photoInput').click());
+$('errorDemoBtn').addEventListener('click', () => $('photoInput').click());
+$('photoInput').addEventListener('change', e => { startUpload(e.target.files[0]); e.target.value = ''; });
 
 // ---------- 即時濃度（模擬） ----------
 // 手機上還沒有真正的模型：用畫面的亮度、對比、邊緣等粗略特徵，混合緩慢變化的隨機值，
@@ -612,19 +767,141 @@ function drawCover(ctx, src, sw, sh, w, h) {
 
 function freezeFrame() {
   const [sw, sh] = sourceSize();
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  surreal.width = Math.round(innerWidth * dpr);
-  surreal.height = Math.round(innerHeight * dpr);
+  // 用較低的解析度算動畫，手機比較不吃力
+  surreal.width = Math.min(720, Math.round(innerWidth * Math.min(window.devicePixelRatio || 1, 2)));
+  surreal.height = Math.round(surreal.width * innerHeight / innerWidth);
   drawCover(sctx, source, sw, sh, surreal.width, surreal.height);
   surreal.classList.add('on');
   $('badge').textContent = 'Painting…';
   $('badge').classList.add('waiting');
+  wait.start();
 }
 
 function unfreeze() {
+  wait.cancel();
   surreal.classList.remove('on');
   $('badge').classList.remove('waiting');
 }
+
+// 等待時：凍結的照片被切成大小不一的方塊，方塊一格一格錯位、又回到原位（有節奏、不連續）。
+// 被挪開的地方用旁邊那一列像素拉長補上，所以只用到照片自己的顏色。
+// 人和動物（偵測層的輪廓）保持完整，只有背景在錯位。
+// 結果出現時：新圖由一條條橫線掃過來，像被風吹開。
+const wait = (() => {
+  const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const STEP_MS = 140, MAX_BLOCKS = 9, REVEAL_MS = 900;
+  let base = null, people = null, raf = 0, blocks = [], stopping = false, onSettled = null, token = 0;
+
+  const make = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+
+  function newBlock(w, h) {
+    const sizes = [w * .04, w * .07, w * .11, w * .16];
+    const bw = Math.max(6, Math.round(sizes[Math.random() * 4 | 0] * (.8 + Math.random() * .8)));
+    const bh = Math.max(6, Math.round(bw * (.5 + Math.random() * 1.2)));
+    const dir = Math.random() < .5 ? -1 : 1;
+    return {
+      x: Math.round(Math.random() * (w - bw)), y: Math.round(Math.random() * (h - bh)), w: bw, h: bh,
+      dx: Math.round(dir * bw * (.6 + Math.random() * 2)),
+      dy: Math.random() < .35 ? Math.round((Math.random() - .5) * bh) : 0,
+      life: 4 + (Math.random() * 7 | 0),
+    };
+  }
+
+  function render() {
+    sctx.drawImage(base, 0, 0);
+    for (const b of blocks) sctx.drawImage(base, Math.max(0, b.x - 1), b.y, 1, b.h, b.x, b.y, b.w, b.h);
+    for (const b of blocks) sctx.drawImage(base, b.x, b.y, b.w, b.h, b.x + b.dx, b.y + b.dy, b.w, b.h);
+    if (people) sctx.drawImage(people, 0, 0);
+  }
+
+  function step() {
+    blocks = blocks.filter(b => --b.life > 0);
+    if (!stopping) {
+      for (let n = 1 + (Math.random() * 2 | 0); n > 0 && blocks.length < MAX_BLOCKS; n--) blocks.push(newBlock(surreal.width, surreal.height));
+    } else if (!blocks.length) {
+      render();
+      const done = onSettled; cancel();
+      if (done) done();
+      return;
+    }
+    render();
+  }
+
+  function start() {
+    cancel();
+    const w = surreal.width, h = surreal.height;
+    base = make(w, h); base.getContext('2d').drawImage(surreal, 0, 0);
+    people = null;
+    const sil = eyes.silhouette();
+    if (sil) {
+      const [sw, sh] = sourceSize(), s = Math.max(w / sw, h / sh);
+      people = make(w, h);
+      const pc = people.getContext('2d');
+      pc.drawImage(base, 0, 0);
+      pc.globalCompositeOperation = 'destination-in';
+      pc.drawImage(sil, (w - sw * s) / 2, (h - sh * s) / 2, sw * s, sh * s);
+    }
+    blocks = []; stopping = false;
+    if (REDUCED) return;
+    const my = ++token;
+    let last = 0;
+    const loop = t => {
+      if (my !== token) return;
+      if (t - last >= STEP_MS) { last = t; step(); }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+  }
+
+  function cancel() {
+    token++;
+    cancelAnimationFrame(raf); raf = 0;
+    onSettled = null;
+  }
+
+  // 出錯或沒有結果時：不再新增方塊，等現有的都回到原位再收尾，畫面不會停在破碎狀態
+  function settle() {
+    stopping = true;
+    return new Promise(res => {
+      if (!raf || !blocks.length) { cancel(); sctx.drawImage(base || surreal, 0, 0); res(); }
+      else onSettled = res;
+    });
+  }
+
+  // 新圖由橫線掃出來；回傳 true 表示動畫完整跑完（中途被取消則回傳 false）
+  function reveal(img) {
+    return new Promise(res => {
+      if (REDUCED || !base) { cancel(); res(true); return; }
+      cancel();
+      const my = ++token, w = surreal.width, h = surreal.height;
+      const old = make(w, h); old.getContext('2d').drawImage(surreal, 0, 0);
+      const fresh = make(w, h);
+      drawCover(fresh.getContext('2d'), img, img.naturalWidth, img.naturalHeight, w, h);
+      const bh = Math.max(3, Math.round(h / 90)), n = Math.ceil(h / bh);
+      const bands = Array.from({ length: n }, () => ({ delay: Math.random() * .45, tail: w * (.12 + Math.random() * .25) }));
+      const t0 = performance.now();
+      const frame = t => {
+        if (my !== token) { res(false); return; }
+        const p = Math.min(1, (t - t0) / REVEAL_MS);
+        sctx.drawImage(old, 0, 0);
+        for (let i = 0; i < n; i++) {
+          const q = Math.max(0, Math.min(1, (p - bands[i].delay) / .55));
+          if (q <= 0) continue;
+          const y = i * bh, e = 1 - Math.pow(1 - q, 3), edge = Math.round(e * w);
+          if (q >= 1) { sctx.drawImage(fresh, 0, y, w, bh, 0, y, w, bh); continue; }
+          if (edge > 0) sctx.drawImage(fresh, 0, y, edge, bh, 0, y, edge, bh);
+          const tail = Math.min(bands[i].tail * (1 - q), w - edge);
+          if (edge > 0 && tail > 1) sctx.drawImage(fresh, edge - 1, y, 1, bh, edge, y, tail, bh);
+        }
+        if (p >= 1) { sctx.drawImage(fresh, 0, 0); res(true); return; }
+        raf = requestAnimationFrame(frame);
+      };
+      raf = requestAnimationFrame(frame);
+    });
+  }
+
+  return { start, cancel, settle, reveal };
+})();
 
 // ---------- Worker 呼叫 ----------
 // 每次按下 Heterotopia 只呼叫一次：同一個請求裡判讀 12 個濃度並生成整張畫面。
@@ -810,6 +1087,7 @@ async function goHeterotopia() {
     }
 
     if (scores && !ops.length) {
+      await wait.settle();
       unfreeze();
       mode = 'result';
       showCaption(`<div class="q">Too ordinary to transform — nothing passes ${THRESHOLD}%.</div>`, 5000);
@@ -817,10 +1095,15 @@ async function goHeterotopia() {
     }
     if (!dataUrl) throw new Error('Gemini answered, but without an image.');
 
-    result.onload = () => { unfreeze(); result.classList.remove('on'); void result.offsetWidth; result.classList.add('on'); };
+    result.onload = async () => {
+      if (!(await wait.reveal(result))) return; // 中途切回 Reality 就不再顯示
+      result.classList.remove('on'); void result.offsetWidth; result.classList.add('on', 'instant');
+      unfreeze();
+    };
     result.src = dataUrl;
     mode = 'result';
   } catch (e) {
+    await wait.settle();
     unfreeze();
     mode = 'real';
     showCaption(`<div class="q err">Couldn’t open the heterotopia.</div><small>${escapeHtml(e.message)}</small>`, 8000);
