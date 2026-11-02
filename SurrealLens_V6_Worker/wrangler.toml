@@ -1,0 +1,29 @@
+name = "surreallens-fal-proxy"
+main = "src/index.js"
+compatibility_date = "2026-10-24"
+
+# Publishes to <name>.<your-subdomain>.workers.dev.
+workers_dev = true
+
+# Secrets (FAL_KEY, APP_ACCESS_TOKEN) are NEVER set here.
+#   wrangler secret put FAL_KEY
+#   wrangler secret put APP_ACCESS_TOKEN
+# Local dev: dummy values go in .dev.vars (gitignored).
+
+# Reuses the usage KV namespace of the Gemini proxy. Every key this Worker
+# writes starts with "fal:", so the two never touch each other's counters.
+kv_namespaces = [
+  { binding = "USAGE_KV", id = "639403e974d2418fb09aeaa697851749" }
+]
+
+[vars]
+# Browser origins allowed to call this Worker (defense in depth, not auth).
+ALLOWED_ORIGINS = "http://localhost:8790,null,https://young6968.github.io"
+MAX_REQUESTS_PER_MINUTE = "5"
+MAX_REQUESTS_PER_DAY = "30"
+
+# Fixed on the server so the phone cannot swap the LoRA.
+LORA_URL = "https://v3b.fal.media/files/b/0ab0d504/t45p_Md-aeGSEwgb24XUv_pytorch_lora_weights.safetensors"
+STRENGTH = "0.9"
+LORA_SCALE = "1"
+FAL_BASE = "https://fal.run"
