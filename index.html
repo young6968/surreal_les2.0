@@ -165,6 +165,13 @@ button:disabled { opacity: .45; cursor: default; }
 .row.top .name, .row.top .pct { opacity: 1; font-weight: 600; }
 .row.used .fill { background: #8fe6c2; }
 
+/* 展開十二個小條：字小一點、行距緊一點，背景的漸層加深一點才讀得到 */
+.panel.open { background: linear-gradient(to top, rgba(18,26,23,.66), rgba(18,26,23,.34) 72%, rgba(18,26,23,0)); }
+.panel.open .labels { gap: 0 14px; }
+.panel.open .row { padding: 1px 0; }
+.panel.open .row .name { font-size: 11px; opacity: .8; }
+.panel.open .row.top .name, .panel.open .row.used .name { opacity: 1; }
+.panel.open .row .pct { font-size: 10px; }
 .panel.min .labels { display: none; }
 .panel.min .panel-head { margin-bottom: 0; }
 
@@ -348,8 +355,9 @@ const LABELS = [
 // 生成規則：只取超過門檻的標籤，最多三個；濃度決定強度
 const THRESHOLD = 40;
 const MAX_OPS = 3;
+const MIN_SOLO = 15; // 沒有標籤超過門檻時，最高的那個至少要到這個數字才畫
 // 畫圖：fal 的 FLUX + 專屬 LoRA（LoRA 網址放在 Worker 裡），image-to-image
-const STRENGTH = 0.9;    // 原照片保留多少：1 = 完全重畫，0 = 原樣
+const STRENGTH = 0.85;   // 原照片保留多少：1 = 完全重畫，0 = 原樣
 const LORA_SCALE = 1;    // LoRA 風格強度
 const REQUEST_TIMEOUT_MS = 90000;
 // Worker 網址不是秘密，直接內建；手機上只需要貼一次通行碼（或點一個含通行碼的連結）
@@ -375,7 +383,7 @@ const ribbons = (() => {
     const w = innerWidth, h = innerHeight;
     cv.width = w * dpr; cv.height = h * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const n = w < 600 ? 6 : 8;
+    const n = w < 600 ? 3 : 4; // 彩帶少一點，留白多一點
     list = Array.from({ length: n }, (_, i) => ({
       y: .08 + .84 * i / (n - 1) + (Math.random() * .06 - .03),
       a1: (20 + Math.random() * 70) * Math.min(1, w / 900 + .4), a2: 10 + Math.random() * 40,
@@ -503,7 +511,29 @@ for (const l of LABELS) {
 function syncPanelHeight() {
   document.documentElement.style.setProperty('--panel-h', panel.offsetHeight + 'px');
 }
-$('handle').addEventListener('click', () => { panel.classList.toggle('min'); syncPanelHeight(); });
+// 面板三種狀態：min（只剩按鈕）→ default（三個標籤）→ open（十二個小條）
+let panelState = 'default';
+const PANEL_STATES = ['min', 'default', 'open'];
+function setPanelState(s) {
+  panelState = s;
+  panel.classList.toggle('min', s === 'min');
+  panel.classList.toggle('open', s === 'open');
+  render(usedNow);
+  syncPanelHeight();
+}
+// 點把手：三個 ⇄ 十二個（從 min 點一下回到三個）
+$('handle').addEventListener('click', () => setPanelState(panelState === 'default' ? 'open' : 'default'));
+// 在面板上往上滑 = 多一級，往下滑 = 少一級
+let swipeY = null;
+panel.addEventListener('touchstart', e => { swipeY = e.touches[0].clientY; }, { passive: true });
+panel.addEventListener('touchend', e => {
+  if (swipeY == null) return;
+  const dy = e.changedTouches[0].clientY - swipeY;
+  swipeY = null;
+  if (Math.abs(dy) < 36) return; // 太短當作點擊，不處理
+  const i = PANEL_STATES.indexOf(panelState) + (dy < 0 ? 1 : -1);
+  setPanelState(PANEL_STATES[Math.max(0, Math.min(PANEL_STATES.length - 1, i))]);
+});
 
 function showCaption(html, ms) {
   const c = $('caption');
@@ -743,6 +773,7 @@ const clip = (() => {
   const TF = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
   const MODEL = 'Xenova/clip-vit-base-patch32';
   const SCALE = 100;
+  const Z_LOW = 0.3, Z_HIGH = 2.5; // 用你的 120 張照片試算：平均每張約 1.5 個標籤超過 40，第一名平均約 62、第二 37、第三 24
   let T = null, proc = null, vis = null, text = null, loading = null, failed = false, ready = false;
   let pct = 0, running = false, timer = 0, doneFor = null, out = null, gate = 0;
   const cv = document.createElement('canvas'); cv.width = cv.height = 224;
@@ -830,9 +861,11 @@ const clip = (() => {
     }
     m.factor = factor;
     return LABELS.map((l, i) => {
+      // 濃度由「比 120 張照片的平均高出幾個標準差（z）」直接換算：z 0.3 → 0，z 2.5 → 100。
+      // 以前用百分位，綠美圖的照片大多落在 90 幾分，三個數字擠在一起；改成這樣只有真的突出的才接近 100。
       const c = CAL[l.id];
-      const p = c ? cdf((m.diffs[i] - c.mu) / c.sd) : 1 / (1 + Math.exp(-m.diffs[i]));
-      return Math.max(0, Math.min(1, (p - .4) / .6)) * factor;
+      const z = c ? (m.diffs[i] - c.mu) / c.sd : m.diffs[i];
+      return Math.max(0, Math.min(1, (z - Z_LOW) / (Z_HIGH - Z_LOW))) * factor;
     });
   }
 
@@ -979,21 +1012,26 @@ function analyse() {
   render();
 }
 
+let usedNow = [];
 function render(usedIds) {
-  // 只顯示目前最高的三個（而且要有一點濃度）；三格的左右順序固定照標籤順序，數字起伏時不會互相換位
+  // 預設只顯示目前最高的三個（而且要有一點濃度）；往上滑或點把手，展開成十二個小條。
+  // 左右順序固定照標籤順序，數字起伏時不會互相換位。送去畫圖的永遠只有被選上的前幾名，跟顯示幾個無關。
+  usedNow = usedIds || [];
+  const all = panelState === 'open';
   const order = ranked();
   const top3 = new Set(order.slice(0, 3).filter(x => Math.round(x.v * 100) >= 1).map(x => x.id));
-  const used = new Set(usedIds || []);
+  const used = new Set(usedNow);
   LABELS.forEach((l, i) => {
     const pct = Math.round(values[i] * 100);
     const row = rows[l.id];
-    row.hidden = !top3.has(l.id);
+    row.hidden = all ? false : !top3.has(l.id);
     row.querySelector('.fill').style.width = pct + '%';
     row.querySelector('.pct').textContent = pct;
     row.classList.toggle('top', top3.has(l.id));
     row.classList.toggle('used', used.has(l.id));
   });
-  $('labels').classList.toggle('none', top3.size === 0);}
+  $('labels').classList.toggle('none', top3.size === 0 && !all);
+}
 
 function startAnalysis() {
   clearInterval(analysisTimer);
@@ -1206,54 +1244,54 @@ const BASE_SENTENCE = 'a dream of open borders, things distinct yet unbounded, e
 
 const DREAMS = {
   chuantang: [
-    { w: 'people', d: true, t: 'visitors and wind pass straight through, the border between park and place dissolving' },
-    { w: 'none', t: 'the park walks in on its own, grass and light crossing a threshold that is not there' },
+    { w: 'people', d: true, t: 'wind and visitors pass straight through one another, nothing marking where either began' },
+    { w: 'none', t: 'grass and light arriving uninvited, crossing a line that is not there' },
     { w: 'none', t: 'wind and sunlight arrive long before any visitor' },
   ],
   jietian: [
-    { w: 'people', d: true, t: 'a private patch of weather borrowed from the sky, rain falling on one spot of ground and wetting no one' },
+    { w: 'people', d: true, t: 'a private patch of weather borrowed from the sky, rain falling on one spot and wetting no one' },
     { w: 'people', t: 'a small sun hung low among the people, borrowed from the sky for the afternoon' },
-    { w: 'any', t: 'clouds passing indoors at the height of a hand' },
+    { w: 'any', t: 'clouds passing at the height of a hand' },
   ],
   shawang: [
-    { w: 'none', d: true, t: 'the distant city seen through a translucent screen, its towers drawn in fine thread' },
-    { w: 'one', t: 'the city looking back through a translucent screen, its windows turned toward the people inside' },
-    { w: 'two+', t: 'people on both sides of a translucent screen regarding one another, outlines drawn in fine thread' },
+    { w: 'none', d: true, t: 'the far distance seen through a haze of fine thread, every outline drawn in light' },
+    { w: 'one', t: 'the distance looking back, its eyes turned toward the one who watches' },
+    { w: 'two+', t: 'people on both sides of a haze of fine thread regarding one another, outlines drawn in light' },
   ],
   raoyou: [
-    { w: 'any', d: true, t: 'a path that coils upward without end into the open sky' },
+    { w: 'any', d: true, t: 'a line of footsteps coiling upward without end into the open sky' },
     { w: 'people', t: 'walkers circling and circling, arriving back where they began without recognizing it' },
     { w: 'two+', t: 'the circling walkers become part of the view seen by others far away' },
   ],
   zhanren: [
-    { w: 'two+', d: true, t: 'people watching one another across a deep impossible drop, tiny as fish in clear water' },
+    { w: 'two+', d: true, t: 'people watching one another across an impossible depth, tiny as fish in clear water' },
     { w: 'people', t: 'a watching presence in the air above, every person aware of being seen' },
     { w: 'one', t: 'a crowd gathered above, looking down at a reader who has become an exhibit' },
   ],
   shaiguang: [
-    { w: 'any', d: true, t: 'light falling through a screen in fine grains, gathering into small drifts' },
+    { w: 'any', d: true, t: 'light sifted into fine grains, gathering into small drifts' },
     { w: 'none', t: 'shadows that look more like artworks than the light that made them' },
     { w: 'people', t: 'light caught in a net, held for a moment above the people' },
   ],
   zizhan: [
-    { w: 'chair', t: 'an ordinary seat swollen into a monumental sculpture, tiny people resting on it' },
+    { w: 'chair', t: 'an ordinary object swollen into a monumental sculpture, tiny people resting against it' },
     { w: 'peopleNoChair', t: 'a lamp treated as a masterpiece, people photographing it from every side' },
-    { w: 'any', d: true, t: 'the whole place treated as a single artwork that cannot be carried away' },
+    { w: 'any', d: true, t: 'the whole scene treated as a single artwork that cannot be carried away' },
   ],
   kuangwai: [
-    { w: 'any', d: true, t: 'a cut-out of sky hung in the air like a painting, impossible to tell from the real sky' },
-    { w: 'plant', t: 'a park cropped into a flat picture, hanging in the open air' },
-    { w: 'people', t: 'people seen through an opening, framed as if they were the painting' },
+    { w: 'any', d: true, t: 'a piece of sky cut out and hung in the air like a painting, impossible to tell from the real sky' },
+    { w: 'plant', t: 'a stretch of green cropped into a flat picture, hanging in the open air' },
+    { w: 'people', t: 'people seen as if framed, standing inside a painting of themselves' },
   ],
   fangsheng: [
     { w: 'three+', t: 'sound frozen mid-air, a silent burst of light and smoke hanging above the crowd' },
     { w: 'two-', t: 'a hush so deep that every footstep leaves a visible ripple in the air' },
-    { w: 'any', d: true, t: 'a distant market heard but never seen, its sounds drifting up as faint colour' },
+    { w: 'any', d: true, t: 'a distant crowd heard but never seen, its sounds drifting up as faint colour' },
   ],
   liuren: [
-    { w: 'chair', d: true, t: 'seats slowly sinking and holding the people who sit in them' },
-    { w: 'chairEmpty', t: 'time left behind on empty seats after the people have gone' },
-    { w: 'people', t: 'people who sat down long ago and have become part of the view' },
+    { w: 'chair', d: true, t: 'soft heavy objects slowly sinking and holding the people who rest in them' },
+    { w: 'chairEmpty', t: 'time left behind as warmth where people have just been' },
+    { w: 'people', t: 'people who rested long ago and have become part of the view' },
   ],
   zhandu: [
     { w: 'any', d: true, t: 'unreadable pages rising from the ground like leaves in a gust, people turning their heads to follow them' },
@@ -1261,9 +1299,9 @@ const DREAMS = {
     { w: 'book', t: 'a book opened toward a camera instead of a reader, its words left unread' },
   ],
   sanjia: [
-    { w: 'chair', t: 'chairs scattered across the ground like islands, the order of the room come loose' },
-    { w: 'book', t: 'shelves and books scattered like islands, everything found only by wandering' },
-    { w: 'any', d: true, t: 'books hanging in the air in a web of red thread, the order of shelves tangled into a net' },
+    { w: 'chair', t: 'everyday objects scattered across the ground like islands, their order come loose' },
+    { w: 'book', t: 'books and loose things scattered like islands, everything found only by wandering' },
+    { w: 'any', d: true, t: 'books hanging in the air in a web of red thread, their order tangled into a net' },
   ],
 };
 
@@ -1276,6 +1314,10 @@ function detectionContext(dets, available) {
     chair: has('chair', 'bench', 'couch'),
     book: has('book'),
     plant: has('potted plant'),
+    animal: has('bird', 'cat', 'dog', 'horse', 'sheep', 'cow'),
+    vessel: has('cup', 'bottle', 'wine glass', 'bowl'),
+    carried: has('backpack', 'handbag', 'umbrella', 'suitcase'),
+    glow: has('laptop', 'cell phone', 'tv'),
   };
 }
 
@@ -1315,13 +1357,17 @@ function pickVariant(labelId, ctx, b64) {
   return use[photoSeed(b64, labelId) % use.length];
 }
 
+// 只說「有什麼」，不說在哪裡、多大、幾個：畫出來的位置和數量跟原照片不同，反而有趣。
+// 車、交通號誌這類偵測得到、但會讓畫面長出無關東西的，不放進來。
 function detectionPhrases(c) {
   const out = [];
-  if (c.people >= 4) out.push('many small figures');
-  else if (c.people >= 1) out.push('a few quiet figures');
+  if (c.people >= 1) out.push('quiet figures');
+  if (c.animal) out.push('quiet animals');
   if (c.book) out.push('open books drifting');
   if (c.plant) out.push('small trees');
-  if (c.chair) out.push('quiet seats');
+  if (c.vessel) out.push('still vessels');
+  if (c.carried) out.push('carried things');
+  if (c.glow) out.push('small lights');
   return out;
 }
 
@@ -1339,10 +1385,11 @@ function dreamPrompt(ops, frame) {
 
 // 超過門檻、最高的前幾名
 function chooseOps(scores) {
-  return LABELS.map(l => ({ ...l, pct: scores[l.id] }))
-    .filter(x => x.pct > THRESHOLD)
-    .sort((a, b) => b.pct - a.pct)
-    .slice(0, MAX_OPS);
+  const ranked = LABELS.map(l => ({ ...l, pct: scores[l.id] })).sort((a, b) => b.pct - a.pct);
+  const over = ranked.filter(x => x.pct > THRESHOLD).slice(0, MAX_OPS);
+  // 數字拉開之後，有些照片沒有任何標籤超過 40：這時仍用最高的那一個畫，只要它不是幾乎 0
+  if (!over.length && ranked[0].pct >= MIN_SOLO) return [ranked[0]];
+  return over;
 }
 
 // 把剛擷取的那一格交給 CLIP 量
@@ -1416,7 +1463,7 @@ async function goHeterotopia() {
       await wait.settle();
       unfreeze();
       mode = 'result';
-      showCaption(`<div class="q">Nothing here to transform.</div><small>No label passes ${THRESHOLD}%, so nothing was sent.</small>`, 5000);
+      showCaption(`<div class="q">Nothing here to transform.</div><small>Nothing stands out enough to draw, so nothing was sent.</small>`, 5000);
       return;
     }
     const { dataUrl } = await transformFrame(frame, ops);
