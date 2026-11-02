@@ -55,6 +55,12 @@ button:disabled { opacity: .45; cursor: default; }
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .subtitle { font-size: 16px; color: var(--ink-soft); line-height: 1.7; }
+/* 灰色小字：標題先出現，過一會兒才慢慢浮現 */
+.tag { font-size: 13px; letter-spacing: .06em; color: #9aa3a0; opacity: 0; animation: tag-in 1.6s ease 1.1s forwards; }
+@keyframes tag-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+/* 進入鏡頭：白光漲滿畫面，再退開 */
+#flash { position: fixed; inset: 0; z-index: 20; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle at 50% 56%, #fff 0, #fff 38%, rgba(255,255,255,.92) 70%, rgba(255,255,255,.8) 100%); }
 .primary {
   margin-top: 8px; padding: 14px 34px; border-radius: 999px;
   background: var(--glass-strong); border: 1px solid var(--line);
@@ -110,6 +116,7 @@ button:disabled { opacity: .45; cursor: default; }
 .brand { letter-spacing: .12em; }
 .pill b { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .badge { font-size: 11px; color: var(--ink-soft); }
+.badge:empty { display: none; }
 .badge.live { color: var(--accent); border-color: rgba(63,143,115,.4); }
 .gear { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; font-size: 16px; }
 @media (max-width: 300px) { .brand { display: none; } }
@@ -141,7 +148,9 @@ button:disabled { opacity: .45; cursor: default; }
 .seg { display: inline-flex; background: rgba(255,255,255,.2); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-radius: 999px; padding: 2px; text-shadow: none; }
 .seg button { padding: 6px 13px; border-radius: 999px; font-size: 13px; color: #fff; min-height: 32px; }
 .seg button.on { background: rgba(255,255,255,.92); color: var(--ink); }
-.summary { font-size: 12px; color: rgba(255,255,255,.9); text-align: right; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary { display: none; } /* 只顯示三個標籤，不再重複列一行摘要 */
+.row[hidden] { display: none; }
+.labels.none::before { content: "Nothing in view yet"; grid-column: 1 / -1; font-size: 12px; color: rgba(255,255,255,.7); padding: 6px 0; }
 
 .labels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 14px; }
 .row {
@@ -186,14 +195,15 @@ button:disabled { opacity: .45; cursor: default; }
 </head>
 <body>
 
+<div id="flash"></div>
+
 <!-- 入口 -->
 <section id="entry" class="screen on">
   <canvas id="ribbons"></canvas>
-  <div class="mark">TAICHUNG GREEN MUSEUMBRARY</div>
-  <h1 class="title">Somewhere in here,<br><em>it is elsewhere.</em></h1>
-  <p class="subtitle">Lift the lens to find where.</p>
+  <h1 class="title">Surreal<em>Lens</em></h1>
+  <p class="tag">Somewhere in here, it is elsewhere.</p>
   <button id="startBtn" class="primary">Look in <span class="go" aria-hidden="true">→</span></button>
-  <button id="demoBtn" class="link">Or upload your own photo</button>
+  <button id="demoBtn" class="link">Upload a photo</button>
   <input id="photoInput" type="file" accept="image/*" hidden>
 </section>
 
@@ -202,7 +212,7 @@ button:disabled { opacity: .45; cursor: default; }
   <div class="mark">CAN'T OPEN THE CAMERA</div>
   <p id="errorMsg" class="subtitle"></p>
   <button id="retryBtn" class="primary">Try again</button>
-  <button id="errorDemoBtn" class="link">Upload a photo instead</button>
+  <button id="errorDemoBtn" class="link">Upload a photo</button>
 </section>
 
 <!-- 鏡頭 -->
@@ -242,9 +252,9 @@ button:disabled { opacity: .45; cursor: default; }
 <section id="settings">
   <div class="sheet">
     <h2>Connection</h2>
-    <p>Heterotopia uses your SurrealLens Worker. Each tap sends that one frame to the AI to read and transform it (1 Worker call). The live bars are read on your device by a small AI model; nothing is uploaded. Settings stay on this device.</p>
+    <p>Heterotopia draws through your SurrealLens fal Worker. Each tap sends that one frame once (1 call). The live bars are read on your device by a small AI model; nothing is uploaded until you tap. Settings stay on this device.</p>
     <label>Worker URL
-      <input id="cfgUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://surreallens-gemini-proxy.xxx.workers.dev">
+      <input id="cfgUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://surreallens-fal-proxy.xxx.workers.dev">
     </label>
     <label>Access token
       <input id="cfgToken" type="password" autocomplete="off" placeholder="APP_ACCESS_TOKEN">
@@ -328,11 +338,12 @@ const LABELS = [
 // 生成規則：只取超過門檻的標籤，最多三個；濃度決定強度
 const THRESHOLD = 40;
 const MAX_OPS = 3;
-const IMAGE_MODEL = 'gemini-3.1-flash-lite-image';
-const REQUEST_TIMEOUT_MS = 60000;
-const STYLE_REFS = ['styles/ref1.jpg'];
-const CFG_URL_KEY = 'surreallens_v6_worker_url';
-const CFG_TOKEN_KEY = 'surreallens_v6_worker_token';
+// 畫圖：fal 的 FLUX + 專屬 LoRA（LoRA 網址放在 Worker 裡），image-to-image
+const STRENGTH = 0.9;    // 原照片保留多少：1 = 完全重畫，0 = 原樣
+const LORA_SCALE = 1;    // LoRA 風格強度
+const REQUEST_TIMEOUT_MS = 90000;
+const CFG_URL_KEY = 'surreallens_v6_fal_url';     // 新 Worker，不沿用舊的 Gemini Worker 設定
+const CFG_TOKEN_KEY = 'surreallens_v6_fal_token';
 
 const $ = id => document.getElementById(id);
 const video = $('video'), still = $('still'), surreal = $('surreal'), result = $('result'), panel = $('panel');
@@ -424,7 +435,7 @@ $('saveBtn').addEventListener('click', () => {
   $('healthMsg').textContent = ok ? 'Saved on this device.' : 'Could not save (storage is blocked in this browser).';
   if (ok) setTimeout(() => $('settings').classList.remove('on'), 600);
 });
-// /v1/health 只驗證 Worker 與通行碼，不會呼叫 Gemini，不花額度
+// /v1/health 只驗證 Worker 與通行碼，不會呼叫 fal，不花額度
 $('testBtn').addEventListener('click', async () => {
   const url = $('cfgUrl').value.trim().replace(/\/+$/, ''), token = $('cfgToken').value;
   if (!url || !token) { $('healthMsg').textContent = 'Fill in both fields first.'; return; }
@@ -434,7 +445,9 @@ $('testBtn').addEventListener('click', async () => {
     const body = await res.json().catch(() => null);
     if (res.status === 200 && body) {
       const q = body.quotaToday || {};
-      $('healthMsg').textContent = `Worker reached and token accepted. Calls used today: ${q.used}/${q.limit}. (This test never calls Gemini.)`;
+      const missing = [!body.falKeyConfigured && 'the fal key', !body.loraConfigured && 'the LoRA'].filter(Boolean);
+      $('healthMsg').textContent = `Worker reached and token accepted. Calls used today: ${q.used}/${q.limit}.` +
+        (missing.length ? ` Not set up on the Worker yet: ${missing.join(', ')}.` : '') + ' (This test never calls fal.)';
     } else if (res.status === 401) {
       $('healthMsg').textContent = 'Worker reached, but the access token is wrong.';
     } else {
@@ -550,7 +563,7 @@ const eyes = (() => {
         }
       };
       seg = await make(vision.ImageSegmenter, SEG_MODEL, { outputCategoryMask: true, outputConfidenceMasks: false });
-      det = await make(vision.ObjectDetector, DET_MODEL, { scoreThreshold: 0.45, maxResults: 12 });
+      det = await make(vision.ObjectDetector, DET_MODEL, { scoreThreshold: 0.3, maxResults: 15 });
     })().catch(e => { failed = true; console.warn('detector failed', e); }).finally(() => btn.classList.remove('loading'));
     return loading;
   }
@@ -620,6 +633,38 @@ const eyes = (() => {
     }
   }
 
+  // 偵測器會先把整張圖縮成很小再找東西，遠處的人縮完只剩幾個像素。
+  // 所以除了整張圖，也沿長邊切成前後兩塊（有重疊）各找一次，等於把遠處放大近一倍，最後合併重複的框。
+  const tcv = document.createElement('canvas'), tctx = tcv.getContext('2d', { willReadFrequently: true });
+  const iou = (a, b) => {
+    const x1 = Math.max(a.originX, b.originX), y1 = Math.max(a.originY, b.originY);
+    const x2 = Math.min(a.originX + a.width, b.originX + b.width), y2 = Math.min(a.originY + a.height, b.originY + b.height);
+    const i = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+    return i / (a.width * a.height + b.width * b.height - i || 1);
+  };
+  function detectAll(sw, sh) {
+    const toDets = (r, ox, oy, k) => r.detections.map(d => ({
+      box: { originX: ox + d.boundingBox.originX * k, originY: oy + d.boundingBox.originY * k, width: d.boundingBox.width * k, height: d.boundingBox.height * k },
+      name: d.categories[0].categoryName, score: d.categories[0].score,
+    }));
+    let all = toDets(det.detectForVideo(source, stamp()), 0, 0, 1);
+    const wide = sw >= sh, long = wide ? sw : sh, short = wide ? sh : sw;
+    if (long / short >= 1.3) {
+      const len = Math.round(long * 0.58);
+      for (const off of [0, long - len]) {
+        const x = wide ? off : 0, y = wide ? 0 : off, w = wide ? len : sw, h = wide ? sh : len;
+        const k = Math.min(1, 640 / Math.max(w, h)); // 送進偵測器的小圖
+        tcv.width = Math.round(w * k); tcv.height = Math.round(h * k);
+        tctx.drawImage(source, x, y, w, h, 0, 0, tcv.width, tcv.height);
+        all = all.concat(toDets(det.detectForVideo(tcv, stamp()), x, y, 1 / k));
+      }
+    }
+    all.sort((a, b) => b.score - a.score);
+    const kept = [];
+    for (const d of all) if (!kept.some(k => k.name === d.name && iou(k.box, d.box) > 0.4)) kept.push(d);
+    return kept.slice(0, 20);
+  }
+
   function tick() {
     if (!active()) return layers(false);
     if (!seg || !det) return;
@@ -629,8 +674,7 @@ const eyes = (() => {
     layers(true);
     if (key && doneFor === key) return; // 上傳的照片只需算一次
     try {
-      dets = det.detectForVideo(source, stamp()).detections
-        .map(d => ({ box: d.boundingBox, name: d.categories[0].categoryName }));
+      dets = detectAll(sw, sh);
       drawBoxes();
       paintGlow(dets.filter(d => LIVING.has(d.name)), sw, sh);
       if (key) doneFor = key;
@@ -647,6 +691,9 @@ const eyes = (() => {
 
   return {
     // 目前偵測到的生物輪廓（白色、有透明度），等待動畫用它讓人保持完整
+    detections: () => dets,
+    // 偵測模型已載入、而且沒被關掉：這時「沒偵測到人」才是真的沒有人，而不是不知道
+    available: () => enabled && !failed && !!seg && !!det,
     silhouette: () => (enabled && !failed && glow.width && glow.height ? glow : null),
     start() {
       if (enabled) load();
@@ -737,7 +784,22 @@ const clip = (() => {
       .finally(() => { running = false; });
   }
 
+  // 量一張指定的圖（按下 Heterotopia 時那一格）。回傳 { 標籤id: 0–100 }；模型沒準備好就回傳 null。
+  // 會等目前正在跑的即時判讀結束，兩邊不會搶同一塊畫布。
+  async function scoreImage(src) {
+    if (!ready || failed) return null;
+    while (running) await new Promise(r => setTimeout(r, 40));
+    running = true;
+    try {
+      const sc = score(await measure(src));
+      const out100 = {};
+      LABELS.forEach((l, i) => { out100[l.id] = Math.round(sc[i] * 100); });
+      return out100;
+    } finally { running = false; }
+  }
+
   return {
+    scoreImage,
     start() { load(); if (!timer) timer = setInterval(tick, 900); },
     targets: () => (ready && !failed ? out : null),
     state: () => (failed ? 'failed' : ready ? 'ready' : 'loading'),
@@ -749,18 +811,29 @@ const clip = (() => {
 
 function idleBadge() {
   const s = clip.state();
-  if (s === 'ready') return 'Live AI';
-  if (s === 'failed') return 'Simulated';
-  return clip.progress() ? `Loading AI ${clip.progress()}%` : 'Loading AI…';
+  if (s === 'ready') return '';           // 正常時不顯示任何字
+  if (s === 'failed') return 'Basic mode'; // 小型 AI 載入失敗，改用粗略判斷
+  return clip.progress() ? `Waking up… ${clip.progress()}%` : 'Waking up…';
 }
 
+// 從首頁進入鏡頭：首頁往前放大、被白光吞沒，鏡頭再從白光裡輕輕縮回原位
 function enterLens() {
   eyes.start();
   clip.start();
-  show('lens');
-  setReality();
-  syncPanelHeight();
-  startAnalysis();
+  const from = document.querySelector('.screen.on');
+  const flash = $('flash'), lens = $('lens');
+  const fancy = from && from.id !== 'lens' && !matchMedia('(prefers-reduced-motion: reduce)').matches && flash.animate;
+  const finish = () => { show('lens'); setReality(); syncPanelHeight(); startAnalysis(); };
+  if (!fancy) return finish();
+  const opts = { fill: 'forwards', easing: 'cubic-bezier(.4,0,.2,1)' };
+  from.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.22)' }], { duration: 420, ...opts });
+  flash.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 420, ...opts }).onfinish = () => {
+    finish();
+    from.getAnimations().forEach(a => a.cancel());
+    lens.animate([{ transform: 'scale(1.08)' }, { transform: 'scale(1)' }], { duration: 800, easing: 'cubic-bezier(.2,.7,.2,1)' });
+    flash.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 800, fill: 'forwards', easing: 'ease-out' })
+      .onfinish = () => flash.getAnimations().forEach(a => a.cancel());
+  };
 }
 
 $('startBtn').addEventListener('click', startCamera);
@@ -838,18 +911,20 @@ function analyse() {
 }
 
 function render(usedIds) {
+  // 只顯示目前最高的三個（而且要有一點濃度）；三格的左右順序固定照標籤順序，數字起伏時不會互相換位
   const order = ranked();
-  const top3 = new Set(order.slice(0, 3).map(x => x.id));
+  const top3 = new Set(order.slice(0, 3).filter(x => Math.round(x.v * 100) >= 1).map(x => x.id));
   const used = new Set(usedIds || []);
   LABELS.forEach((l, i) => {
     const pct = Math.round(values[i] * 100);
     const row = rows[l.id];
+    row.hidden = !top3.has(l.id);
     row.querySelector('.fill').style.width = pct + '%';
     row.querySelector('.pct').textContent = pct;
     row.classList.toggle('top', top3.has(l.id));
     row.classList.toggle('used', used.has(l.id));
   });
-  $('summary').textContent = order.slice(0, 3).map(x => `${x.name} ${Math.round(x.v * 100)}`).join(' · ');
+  $('labels').classList.toggle('none', top3.size === 0);
 }
 
 function startAnalysis() {
@@ -885,6 +960,7 @@ function unfreeze() {
   wait.cancel();
   surreal.classList.remove('on');
   $('badge').classList.remove('waiting');
+  $('badge').textContent = idleBadge(); // 不要讓「Painting…」停在畫面上
 }
 
 // 等待時：凍結的照片被切成大小不一的方塊，方塊一格一格錯位、又回到原位（有節奏、不連續）。
@@ -1008,17 +1084,17 @@ const wait = (() => {
 })();
 
 // ---------- Worker 呼叫 ----------
-// 每次按下 Heterotopia 只呼叫一次：同一個請求裡判讀 12 個濃度並生成整張畫面。
-// 不自動重試：逾時代表「不知道 Gemini 有沒有處理」，不是「失敗」。
-async function callWorker(model, payload) {
+// 每次按下 Heterotopia 只呼叫一次，畫一張圖。
+// 不自動重試：逾時代表「不知道 fal 有沒有處理」，不是「失敗」。
+async function callWorker(requestBody) {
   const cfg = loadCfg();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(cfg.url.replace(/\/+$/, '') + '/v1/generate', {
+    const res = await fetch(cfg.url.replace(/\/+$/, '') + '/v1/dream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.token },
-      body: JSON.stringify({ apiVersion: 'v1beta', model, payload }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
     const text = await res.text();
@@ -1041,12 +1117,9 @@ function describeFailure(status, body, text) {
   if (slug === 'daily_quota_reached') return 'Today’s Worker quota is used up.';
   if (status === 429) return 'Too many requests right now. Wait a minute and try again.';
   if (status === 413) return 'The frame was too large to send.';
-  return `The Worker or Gemini returned an error (HTTP ${status}): ${String(slug || text).slice(0, 160)}`;
-}
-
-function partsOf(body) {
-  const c = body && body.candidates && body.candidates[0];
-  return (c && c.content && c.content.parts) || [];
+  if (slug === 'fal_key_not_configured') return 'The Worker has no fal key yet. Set it with wrangler (see the setup notes).';
+  if (slug === 'lora_not_configured') return 'The Worker has no LoRA set up.';
+  return `The Worker or fal returned an error (HTTP ${status}): ${String(slug || text).slice(0, 160)}`;
 }
 
 function captureFrame(maxSide) {
@@ -1058,46 +1131,145 @@ function captureFrame(maxSide) {
   return { b64: c.toDataURL('image/jpeg', 0.85).split(',')[1], w: c.width, h: c.height };
 }
 
-const styleCache = {};
-async function loadStyleRef(path) {
-  if (styleCache[path]) return styleCache[path];
-  const blob = await (await fetch(path)).blob();
-  const b64 = await new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result).split(',')[1]);
-    r.onerror = reject;
-    r.readAsDataURL(blob);
-  });
-  return (styleCache[path] = b64);
+// ---------- 夢境句子（草稿見 綠美圖_夢境句子.md） ----------
+// 畫圖用的 prompt 由程式自動組：基本句 + 前三名標籤各一句 + 畫面裡偵測到的東西。使用者不用輸入。
+// 每個標籤有 2–3 個變體，w 是「適合的情況」；d: true 是偵測層用不了時的預設。
+const BASE_SENTENCE = 'a dream of open borders, things distinct yet unbounded, exact and unfinished, surreal';
+
+const DREAMS = {
+  chuantang: [
+    { w: 'people', d: true, t: 'visitors and wind pass straight through, the border between park and place dissolving' },
+    { w: 'none', t: 'the park walks in on its own, grass and light crossing a threshold that is not there' },
+    { w: 'none', t: 'wind and sunlight arrive long before any visitor' },
+  ],
+  jietian: [
+    { w: 'people', d: true, t: 'a private patch of weather borrowed from the sky, rain falling on one spot of ground and wetting no one' },
+    { w: 'people', t: 'a small sun hung low among the people, borrowed from the sky for the afternoon' },
+    { w: 'any', t: 'clouds passing indoors at the height of a hand' },
+  ],
+  shawang: [
+    { w: 'none', d: true, t: 'the distant city seen through a translucent screen, its towers drawn in fine thread' },
+    { w: 'one', t: 'the city looking back through a translucent screen, its windows turned toward the people inside' },
+    { w: 'two+', t: 'people on both sides of a translucent screen regarding one another, outlines drawn in fine thread' },
+  ],
+  raoyou: [
+    { w: 'any', d: true, t: 'a path that coils upward without end into the open sky' },
+    { w: 'people', t: 'walkers circling and circling, arriving back where they began without recognizing it' },
+    { w: 'two+', t: 'the circling walkers become part of the view seen by others far away' },
+  ],
+  zhanren: [
+    { w: 'two+', d: true, t: 'people watching one another across a deep impossible drop, tiny as fish in clear water' },
+    { w: 'people', t: 'a watching presence in the air above, every person aware of being seen' },
+    { w: 'one', t: 'a crowd gathered above, looking down at a reader who has become an exhibit' },
+  ],
+  shaiguang: [
+    { w: 'any', d: true, t: 'light falling through a screen in fine grains, gathering into small drifts' },
+    { w: 'none', t: 'shadows that look more like artworks than the light that made them' },
+    { w: 'people', t: 'light caught in a net, held for a moment above the people' },
+  ],
+  zizhan: [
+    { w: 'chair', t: 'an ordinary seat swollen into a monumental sculpture, tiny people resting on it' },
+    { w: 'peopleNoChair', t: 'a lamp treated as a masterpiece, people photographing it from every side' },
+    { w: 'any', d: true, t: 'the whole place treated as a single artwork that cannot be carried away' },
+  ],
+  kuangwai: [
+    { w: 'any', d: true, t: 'a cut-out of sky hung in the air like a painting, impossible to tell from the real sky' },
+    { w: 'plant', t: 'a park cropped into a flat picture, hanging in the open air' },
+    { w: 'people', t: 'people seen through an opening, framed as if they were the painting' },
+  ],
+  fangsheng: [
+    { w: 'three+', t: 'sound frozen mid-air, a silent burst of light and smoke hanging above the crowd' },
+    { w: 'two-', t: 'a hush so deep that every footstep leaves a visible ripple in the air' },
+    { w: 'any', d: true, t: 'a distant market heard but never seen, its sounds drifting up as faint colour' },
+  ],
+  liuren: [
+    { w: 'chair', d: true, t: 'seats slowly sinking and holding the people who sit in them' },
+    { w: 'chairEmpty', t: 'time left behind on empty seats after the people have gone' },
+    { w: 'people', t: 'people who sat down long ago and have become part of the view' },
+  ],
+  zhandu: [
+    { w: 'any', d: true, t: 'unreadable pages rising from the ground like leaves in a gust, people turning their heads to follow them' },
+    { w: 'people', t: 'scrolls of unreadable script flying through the air like flocks of birds, people reaching up toward pages they cannot read' },
+    { w: 'book', t: 'a book opened toward a camera instead of a reader, its words left unread' },
+  ],
+  sanjia: [
+    { w: 'chair', t: 'chairs scattered across the ground like islands, the order of the room come loose' },
+    { w: 'book', t: 'shelves and books scattered like islands, everything found only by wandering' },
+    { w: 'any', d: true, t: 'books hanging in the air in a web of red thread, the order of shelves tangled into a net' },
+  ],
+};
+
+// 偵測層看到什麼 → 一個簡單的情境
+function detectionContext(dets, available) {
+  const has = (...names) => dets.some(d => names.includes(d.name));
+  return {
+    available,
+    people: dets.filter(d => d.name === 'person').length,
+    chair: has('chair', 'bench', 'couch'),
+    book: has('book'),
+    plant: has('potted plant'),
+  };
 }
 
-// 一次呼叫同時完成：先依判斷依據打 12 個濃度，再依門檻規則生成整張畫面。
-// 模型先輸出一行 JSON（只給濃度條用，不顯示成說明文字），再輸出圖片。
-function lensPrompt() {
-  const lines = LABELS.map(l =>
-    `- ${l.id} (${l.name}, ${l.en}). Cues: ${l.cue}. Low when: ${l.low}. Operation: ${l.op}.`).join('\n');
-  return `The SCENE image is a live phone photo. It may or may not be the Taichung Green Museumbrary (a library and art museum by SANAA set inside a park); judge it only by what it shows.
-The STYLE images are references for rendering only. Never take their people, figures, poses, objects, layout or viewpoint. Every person and object in your result must come from the SCENE.
-
-STEP 1 — Score how strongly the SCENE shows each of the 12 relations below, from 0 to 100, using its cues.
-0 = absent. 50 = clearly present but not dominant. 100 = it defines the image.
-Judge only what is visible in the SCENE, never the STYLE images. A restaurant, home, office or ordinary interior should score low on almost everything.
-
-STEP 2 — Take only the relations scoring above ${THRESHOLD}, at most ${MAX_OPS}, strongest first, and apply their operations:
-41–59 = a subtle hint, 60–79 = clearly visible, 80–100 = dominant, reshaping the whole scene.
-Edit the SCENE into a contemporary surrealist image of the SAME place from the SAME viewpoint, camera height and framing.
-Transform the whole frame, not a small overlay, while keeping what is in the SCENE recognizable: its architecture, materials, light direction and composition. Keep its people where they are; add no new people.
-Take from the STYLE images only rendering quality, realism, light, palette and the calm, airy mood.
-Never enclose or darken the building; it must stay light and transparent.
-No captions, logos or watermarks. Photorealistic and highly detailed.
-If no relation scores above ${THRESHOLD}, do not create an image.
-
-Relations:
-${lines}
-
-OUTPUT: first one line of JSON and nothing else in text, exactly like {"scores":{"${LABELS.map(l => l.id).join('":0,"')}":0}}, then the image.`;
+function variantFits(w, c) {
+  switch (w) {
+    case 'any': return true;
+    case 'people': return c.people >= 1;
+    case 'none': return c.people === 0;
+    case 'one': return c.people === 1;
+    case 'two+': return c.people >= 2;
+    case 'three+': return c.people >= 3;
+    case 'two-': return c.people <= 2;
+    case 'chair': return c.chair;
+    case 'chairEmpty': return c.chair && c.people === 0;
+    case 'peopleNoChair': return c.people >= 1 && !c.chair;
+    case 'plant': return c.plant;
+    case 'book': return c.book;
+    default: return false;
+  }
 }
 
+// 照片本身算出的固定數字（同一張照片永遠同一個），用來在多個符合的變體裡挑，不用亂數
+function photoSeed(b64, salt) {
+  let h = 2166136261;
+  const s = salt + '|' + b64.length;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  for (let i = 0; i < b64.length; i += 997) { h ^= b64.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h >>> 0;
+}
+
+function pickVariant(labelId, ctx, b64) {
+  const list = DREAMS[labelId];
+  if (!ctx.available) return list.find(v => v.d) || list[0];
+  const specific = list.filter(v => v.w !== 'any' && variantFits(v.w, ctx));
+  const pool = specific.length ? specific : list.filter(v => v.w === 'any' || variantFits(v.w, ctx));
+  const use = pool.length ? pool : list;
+  return use[photoSeed(b64, labelId) % use.length];
+}
+
+function detectionPhrases(c) {
+  const out = [];
+  if (c.people >= 4) out.push('many small figures');
+  else if (c.people >= 1) out.push('a few quiet figures');
+  if (c.book) out.push('open books drifting');
+  if (c.plant) out.push('small trees');
+  if (c.chair) out.push('quiet seats');
+  return out;
+}
+
+// 濃度由手機上的 CLIP 量原照片（量尺固定、同一張圖永遠同一組數字），畫圖模型不打分。
+// 這裡把「前三名標籤」換成各自的夢境句子，連同偵測到的東西，組成給 fal 的 prompt。
+function dreamPrompt(ops, frame) {
+  const available = typeof eyes.available === 'function' && eyes.available();
+  const ctx = detectionContext(available ? eyes.detections() : [], available);
+  const picks = ops.map(o => ({ id: o.id, t: pickVariant(o.id, ctx, frame.b64).t }));
+  const seen = detectionPhrases(ctx);
+  const prompt = [BASE_SENTENCE + '.', picks.map(p => p.t).join('; ') + '.', seen.length ? seen.join(', ') + '.' : '']
+    .filter(Boolean).join('\n');
+  return { prompt, picks, ctx };
+}
+
+// 超過門檻、最高的前幾名
 function chooseOps(scores) {
   return LABELS.map(l => ({ ...l, pct: scores[l.id] }))
     .filter(x => x.pct > THRESHOLD)
@@ -1105,48 +1277,25 @@ function chooseOps(scores) {
     .slice(0, MAX_OPS);
 }
 
-function parseScores(text) {
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try {
-    const parsed = JSON.parse(m[0]);
-    const src = parsed.scores || parsed;
-    const scores = {};
-    for (const l of LABELS) {
-      const v = Number(src[l.id]);
-      scores[l.id] = Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : 0;
-    }
-    return scores;
-  } catch (e) { return null; }
+// 把剛擷取的那一格交給 CLIP 量
+async function measureFrame(frame) {
+  const im = new Image();
+  im.src = 'data:image/jpeg;base64,' + frame.b64;
+  await im.decode();
+  return clip.scoreImage(im);
 }
 
-function aspectFor(w, h) {
-  const r = w / h;
-  if (r < 0.9) return '3:4';
-  if (r > 1.1) return '4:3';
-  return '1:1';
-}
-
-async function transformFrame(frame) {
-  const refs = await Promise.all(STYLE_REFS.map(loadStyleRef));
-  const body = await callWorker(IMAGE_MODEL, {
-    // 每張圖前面先放一句說明它的角色，免得模型把風格參考當成要改的場景
-    contents: [{ role: 'user', parts: [
-      { text: 'SCENE — the photo to transform. Keep its place, viewpoint and people:' },
-      { inline_data: { mime_type: 'image/jpeg', data: frame.b64 } },
-      ...refs.flatMap((b64, i) => [
-        { text: `STYLE ${i + 1} — style reference only. Do not use its people, objects, layout or viewpoint:` },
-        { inline_data: { mime_type: 'image/jpeg', data: b64 } },
-      ]),
-      { text: lensPrompt() },
-    ] }],
-    generationConfig: { candidateCount: 1, responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: aspectFor(frame.w, frame.h) } },
+async function transformFrame(frame, ops) {
+  const { prompt, picks } = dreamPrompt(ops, frame);
+  window.lastDream = { prompt, picks }; // 除錯用：在 console 輸入 lastDream 看剛剛送了什麼
+  const body = await callWorker({
+    image: 'data:image/jpeg;base64,' + frame.b64,
+    prompt, width: frame.w, height: frame.h,
+    strength: STRENGTH, scale: LORA_SCALE,
   });
-  const parts = partsOf(body);
-  const scores = parseScores(parts.map(p => p.text || '').join(''));
-  const img = parts.map(p => p.inlineData || p.inline_data).find(Boolean);
-  const dataUrl = img && img.data ? `data:${img.mimeType || img.mime_type || 'image/png'};base64,${img.data}` : null;
-  return { scores, dataUrl };
+  if (body.nsfw) throw new Error('The safety filter blocked this picture, so there is nothing to show.');
+  if (!body.image) throw new Error('The Worker answered, but without an image.');
+  return { dataUrl: body.image };
 }
 
 // ---------- 模式 ----------
@@ -1173,6 +1322,9 @@ async function goHeterotopia() {
   if (!cfg.url || !cfg.token) { openSettings('Set up the Worker connection first.'); return; }
   const [sw] = sourceSize();
   if (!sw) return;
+  // 濃度要由手機上的 CLIP 量，沒準備好就不畫（不拿猜的數字來代替）
+  if (clip.state() === 'loading') { showCaption('<div class="q">The lens is still waking up.</div><small>Try again in a moment.</small>', 4000); return; }
+  if (clip.state() === 'failed') { showCaption('<div class="q err">The reading AI could not start on this device.</div><small>Heterotopia needs it to measure the view, so nothing was sent.</small>', 7000); return; }
 
   busy = true; mode = 'busy';
   setButtons();
@@ -1181,23 +1333,22 @@ async function goHeterotopia() {
   freezeFrame();
 
   try {
-    const { scores, dataUrl } = await transformFrame(frame);
-    const ops = scores ? chooseOps(scores) : [];
-    if (scores) {
-      LABELS.forEach((l, i) => { values[i] = scores[l.id] / 100; });
-      render(ops.map(o => o.id));
-      $('badge').textContent = 'AI reading';
-      $('badge').classList.add('live');
-    }
+    // 先量這一格（在手機上，不花 API），再決定畫什麼
+    const scores = await measureFrame(frame);
+    if (!scores) throw new Error('The reading AI was not ready.');
+    const ops = chooseOps(scores);
+    LABELS.forEach((l, i) => { values[i] = scores[l.id] / 100; });
+    render(ops.map(o => o.id)); // 面板停在這一格的前三名（原照片的分數）
 
-    if (scores && !ops.length) {
+    if (!ops.length) {
       await wait.settle();
       unfreeze();
       mode = 'result';
-      showCaption(`<div class="q">Too ordinary to transform — nothing passes ${THRESHOLD}%.</div>`, 5000);
+      showCaption(`<div class="q">Nothing here to transform.</div><small>No label passes ${THRESHOLD}%, so nothing was sent.</small>`, 5000);
       return;
     }
-    if (!dataUrl) throw new Error('Gemini answered, but without an image.');
+    const { dataUrl } = await transformFrame(frame, ops);
+    if (!dataUrl) throw new Error('The Worker answered, but without an image.');
 
     result.onload = async () => {
       if (!(await wait.reveal(result))) return; // 中途切回 Reality 就不再顯示
