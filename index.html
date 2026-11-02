@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content">
 <meta name="theme-color" content="#fbfcfb">
 <title>SurrealLens V6</title>
 <style>
@@ -169,17 +169,27 @@ button:disabled { opacity: .45; cursor: default; }
 .panel.min .panel-head { margin-bottom: 0; }
 
 /* ---------- 設定 ---------- */
+/* 設定從頂部落下：欄位在畫面最上面，鍵盤從下面升起時不會把它們頂走或讓版面亂跳 */
 #settings {
-  position: fixed; inset: 0; display: none; align-items: flex-end; justify-content: center;
-  background: rgba(31,42,39,.25); z-index: 10;
+  position: fixed; inset: 0; display: none; align-items: flex-start; justify-content: center;
+  background: rgba(31,42,39,.25); z-index: 30;
+  overflow-y: auto; overscroll-behavior: contain;
 }
 #settings.on { display: flex; }
 .sheet {
   width: 100%; max-width: 520px; background: var(--glass-strong);
   backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  border-radius: 22px 22px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  border-radius: 0 0 22px 22px; padding: calc(18px + env(safe-area-inset-top)) 16px 18px;
   display: flex; flex-direction: column; gap: 12px;
+  animation: sheet-in .24s cubic-bezier(.2,.7,.2,1);
 }
+@keyframes sheet-in { from { transform: translateY(-40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sheet { animation: none; } }
+#entry > #gearBtn { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 14px; z-index: 2; }
+.brand { cursor: pointer; }
+.toast { position: fixed; left: 50%; bottom: calc(28px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 40;
+  padding: 10px 16px; border-radius: 999px; background: rgba(20,20,22,.88); color: #fff; font-size: 13px; white-space: nowrap;
+  animation: sheet-in .24s ease; }
 .sheet h2 { font-size: 18px; font-weight: 500; }
 .sheet p { font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
 .sheet label { font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
@@ -205,6 +215,7 @@ button:disabled { opacity: .45; cursor: default; }
   <button id="startBtn" class="primary">Look in <span class="go" aria-hidden="true">→</span></button>
   <button id="demoBtn" class="link">Upload a photo</button>
   <input id="photoInput" type="file" accept="image/*" hidden>
+  <button id="gearBtn" class="gear" aria-label="Settings">⚙</button>
 </section>
 
 <!-- 錯誤 -->
@@ -225,11 +236,10 @@ button:disabled { opacity: .45; cursor: default; }
   <canvas id="boxes"></canvas>
 
   <header class="topbar">
-    <div class="brand">SurrealLens</div>
+    <div id="brand" class="brand" role="button" aria-label="Back to the first page" title="Back to the first page">‹ SurrealLens</div>
     <div class="right">
       <div id="badge" class="badge">Simulated</div>
       <button id="eyesBtn" class="gear on" aria-label="Show detected beings and objects" title="Detection on/off">◎</button>
-      <button id="gearBtn" class="gear" aria-label="Settings">⚙</button>
     </div>
   </header>
 
@@ -252,19 +262,19 @@ button:disabled { opacity: .45; cursor: default; }
 <section id="settings">
   <div class="sheet">
     <h2>Connection</h2>
-    <p>Heterotopia draws through your SurrealLens fal Worker. Each tap sends that one frame once (1 call). The live bars are read on your device by a small AI model; nothing is uploaded until you tap. Settings stay on this device.</p>
     <label>Worker URL
       <input id="cfgUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://surreallens-fal-proxy.xxx.workers.dev">
     </label>
     <label>Access token
       <input id="cfgToken" type="password" autocomplete="off" placeholder="APP_ACCESS_TOKEN">
     </label>
-    <div id="healthMsg"></div>
     <div class="actions">
       <button id="testBtn">Test connection</button>
       <button id="closeBtn">Close</button>
       <button id="saveBtn" class="save">Save</button>
     </div>
+    <div id="healthMsg"></div>
+    <p>Heterotopia draws through your SurrealLens fal Worker. Each tap sends that one frame once (1 call). The live bars are read on your device by a small AI model; nothing is uploaded until you tap. Settings stay on this device.</p>
   </div>
 </section>
 
@@ -342,6 +352,8 @@ const MAX_OPS = 3;
 const STRENGTH = 0.9;    // 原照片保留多少：1 = 完全重畫，0 = 原樣
 const LORA_SCALE = 1;    // LoRA 風格強度
 const REQUEST_TIMEOUT_MS = 90000;
+// Worker 網址不是秘密，直接內建；手機上只需要貼一次通行碼（或點一個含通行碼的連結）
+const DEFAULT_WORKER_URL = 'https://surreallens-fal-proxy.surreallens-amily.workers.dev';
 const CFG_URL_KEY = 'surreallens_v6_fal_url';     // 新 Worker，不沿用舊的 Gemini Worker 設定
 const CFG_TOKEN_KEY = 'surreallens_v6_fal_token';
 
@@ -414,26 +426,45 @@ function escapeHtml(s) {
 
 // ---------- 設定（存在這台裝置） ----------
 function loadCfg() {
-  try { return { url: (localStorage.getItem(CFG_URL_KEY) || '').trim(), token: localStorage.getItem(CFG_TOKEN_KEY) || '' }; }
-  catch (e) { return { url: '', token: '' }; }
+  try { return { url: (localStorage.getItem(CFG_URL_KEY) || '').trim() || DEFAULT_WORKER_URL, token: localStorage.getItem(CFG_TOKEN_KEY) || '' }; }
+  catch (e) { return { url: DEFAULT_WORKER_URL, token: '' }; }
 }
 function saveCfg(url, token) {
   try { localStorage.setItem(CFG_URL_KEY, url.trim()); localStorage.setItem(CFG_TOKEN_KEY, token); return true; }
   catch (e) { return false; }
 }
+
+// 含通行碼的連結：…/index.html?v=42#t=通行碼
+// 開一次就存進這台裝置，並立刻把通行碼從網址列拿掉（#後面的部分本來就不會送給任何伺服器）
+(function importTokenFromLink() {
+  const m = /[#&]t=([A-Za-z0-9_-]{16,128})/.exec(location.hash);
+  if (!m) return;
+  const ok = saveCfg(loadCfg().url, m[1]);
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = ok ? 'Connection saved on this device.' : 'Could not save (storage is blocked in this browser).';
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 4200);
+})();
 function openSettings(msg) {
   const cfg = loadCfg();
   $('cfgUrl').value = cfg.url;
   $('cfgToken').value = cfg.token;
   $('healthMsg').textContent = msg || '';
+  ribbons.stop(); // 打字時背景不要一直動
   $('settings').classList.add('on');
 }
+function closeSettings() {
+  $('settings').classList.remove('on');
+  if ($('entry').classList.contains('on')) ribbons.start();
+}
 $('gearBtn').addEventListener('click', () => openSettings());
-$('closeBtn').addEventListener('click', () => $('settings').classList.remove('on'));
+$('closeBtn').addEventListener('click', closeSettings);
 $('saveBtn').addEventListener('click', () => {
   const ok = saveCfg($('cfgUrl').value, $('cfgToken').value);
   $('healthMsg').textContent = ok ? 'Saved on this device.' : 'Could not save (storage is blocked in this browser).';
-  if (ok) setTimeout(() => $('settings').classList.remove('on'), 600);
+  if (ok) setTimeout(closeSettings, 600);
 });
 // /v1/health 只驗證 Worker 與通行碼，不會呼叫 fal，不花額度
 $('testBtn').addEventListener('click', async () => {
@@ -1113,7 +1144,7 @@ async function callWorker(requestBody) {
 
 function describeFailure(status, body, text) {
   const slug = body && body.error && (typeof body.error === 'string' ? body.error : body.error.message);
-  if (status === 401) return 'The access token was rejected. Check it in settings.';
+  if (status === 401) return 'The access token was rejected. Go back to the first page and check it in ⚙.';
   if (slug === 'daily_quota_reached') return 'Today’s Worker quota is used up.';
   if (status === 429) return 'Too many requests right now. Wait a minute and try again.';
   if (status === 413) return 'The frame was too large to send.';
@@ -1319,7 +1350,11 @@ function setReality() {
 async function goHeterotopia() {
   if (busy || mode !== 'real') return;
   const cfg = loadCfg();
-  if (!cfg.url || !cfg.token) { openSettings('Set up the Worker connection first.'); return; }
+  if (!cfg.url || !cfg.token) {
+    // 設定在第一頁（⚙）：這裡相機一直在跑、鍵盤會讓版面亂跳，所以不在鏡頭頁輸入
+    showCaption('<div class="q">The connection isn’t set up yet.</div><small>Tap “‹ SurrealLens” (top left) to go back, then tap ⚙ on the first page.</small>', 7000);
+    return;
+  }
   const [sw] = sourceSize();
   if (!sw) return;
   // 濃度要由手機上的 CLIP 量，沒準備好就不畫（不拿猜的數字來代替）
@@ -1367,6 +1402,21 @@ async function goHeterotopia() {
     setButtons();
   }
 }
+
+// 回第一頁：關相機、停掉鏡頭頁的運算（設定、上傳都在第一頁）
+function goHome() {
+  if (busy) return;
+  clearInterval(analysisTimer);
+  stopCamera();
+  wait.cancel();
+  surreal.classList.remove('on');
+  result.classList.remove('on');
+  $('caption').classList.remove('on');
+  video.srcObject = null;
+  source = null; mode = 'real';
+  show('entry');
+}
+$('brand').addEventListener('click', goHome);
 
 $('modeReal').addEventListener('click', () => { if (!busy) setReality(); });
 $('modeSurreal').addEventListener('click', goHeterotopia);
