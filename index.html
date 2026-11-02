@@ -788,12 +788,13 @@ const eyes = (() => {
 // 手機只下載看圖的那一半，把畫面轉成向量，和每個標籤「像」與「不像」的描述比較：
 // 越像描述，濃度越高；再乘上「這看起來像不像綠美圖那種建築」，所以餐廳、桌面、手都會偏低。
 // 校正值：用 333 張照片（原本的 120 張 + fb / ins / th 資料夾裡 213 張不重複的）算出每個標籤的平均 mu 與標準差 sd
-const CAL = {"chuantang":{"mu":0.83,"sd":1.502},"jietian":{"mu":1.137,"sd":1.458},"shawang":{"mu":2.014,"sd":1.612},"raoyou":{"mu":0.64,"sd":1.575},"zhanren":{"mu":0.957,"sd":1.554},"shaiguang":{"mu":2.123,"sd":1.475},"zizhan":{"mu":-0.068,"sd":2.088},"kuangwai":{"mu":0.329,"sd":1.321},"fangsheng":{"mu":-0.932,"sd":1.912},"liuren":{"mu":-1.443,"sd":1.187},"zhandu":{"mu":1.098,"sd":1.298},"sanjia":{"mu":-0.27,"sd":1.17}};
+const CAL = {"chuantang":{"mu":0.83,"sd":1.502},"jietian":{"mu":0.739,"sd":1.348},"shawang":{"mu":2.014,"sd":1.612},"raoyou":{"mu":0.64,"sd":1.575},"zhanren":{"mu":0.957,"sd":1.554},"shaiguang":{"mu":1.757,"sd":1.519},"zizhan":{"mu":-0.068,"sd":2.088},"kuangwai":{"mu":0.329,"sd":1.321},"fangsheng":{"mu":-0.932,"sd":1.912},"liuren":{"mu":-1.443,"sd":1.187},"zhandu":{"mu":1.098,"sd":1.298},"sanjia":{"mu":-0.27,"sd":1.17}};
 const clip = (() => {
   const TF = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
   const MODEL = 'Xenova/clip-vit-base-patch32';
   const SCALE = 100;
   const Z_LOW = 0.1, Z_HIGH = 2.2; // 用 333 張照片試算：平均每張約 2 個標籤超過 40，第一名平均約 64、第二 44、第三 30
+  const LIFT_LO = 0.55, LIFT_HI = 0.72, Z_TOP = 1.3; // 用 333 張照片試算：沒有一張的第一名低於 30；平均每張約 2.6 個標籤超過 40
   let T = null, proc = null, vis = null, text = null, loading = null, failed = false, ready = false;
   let pct = 0, running = false, timer = 0, doneFor = null, out = null, gate = 0;
   const cv = document.createElement('canvas'); cv.width = cv.height = 224;
@@ -872,21 +873,26 @@ const clip = (() => {
   const erf = x => { const t = 1 / (1 + .3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; };
   const cdf = z => .5 * (1 + erf(z / Math.SQRT2));
   function score(m) {
-    // 把握度：這一格有多像「大家拍過的 120 張綠美圖照片」（最像的 5 張的平均相似度）。
+    // 把握度：這一格有多像「大家拍過的 333 張綠美圖照片」（最像的 5 張的平均相似度，0–1）。
     // 只用來調整數字大小，不擋任何東西；拍牆角、椅子局部也像其中某幾張，所以不會被擋掉。
-    // 門檻（lo / hi / floor）寫在 clip_refs.json，是用「照片自己比對」與「非綠美圖照片」校出來的。
+    // 門檻（lo / hi / floor）寫在 clip_refs.json。
     let factor = 1;
     if (refs && m.typ != null) {
       factor = refs.floor + (1 - refs.floor) * Math.max(0, Math.min(1, (m.typ - refs.lo) / (refs.hi - refs.lo)));
     }
     m.factor = factor;
-    return LABELS.map((l, i) => {
-      // 濃度由「比 120 張照片的平均高出幾個標準差（z）」直接換算：z 0.3 → 0，z 2.5 → 100。
-      // 以前用百分位，綠美圖的照片大多落在 90 幾分，三個數字擠在一起；改成這樣只有真的突出的才接近 100。
+    // 每個標籤比「大家照片的平均」高出幾個標準差（z）
+    const zs = LABELS.map((l, i) => {
       const c = CAL[l.id];
-      const z = c ? (m.diffs[i] - c.mu) / c.sd : m.diffs[i];
-      return Math.max(0, Math.min(1, (z - Z_LOW) / (Z_HIGH - Z_LOW))) * factor;
+      return c ? (m.diffs[i] - c.mu) / c.sd : m.diffs[i];
     });
+    // 這張如果真的很像大家拍過的綠美圖照片，卻沒有任何標籤特別突出（例如一張很暗、光影很強的走廊），
+    // 就把「整張照片的所有標籤」一起往上抬，讓最高的那個至少到 Z_TOP；排名和彼此的差距不變。
+    // 不像大家拍過的照片（typ 低）就抬得很少或不抬，所以咖啡店、手不會被硬抬成高分。
+    const w = (refs && m.typ != null) ? Math.max(0, Math.min(1, (m.typ - LIFT_LO) / (LIFT_HI - LIFT_LO))) : 1;
+    const lift = Math.max(0, Z_TOP * w - Math.max(...zs));
+    m.lift = lift;
+    return zs.map(z => Math.max(0, Math.min(1, (z + lift - Z_LOW) / (Z_HIGH - Z_LOW))) * factor);
   }
 
   async function run() {
